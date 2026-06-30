@@ -1,0 +1,68 @@
+{
+  "name": "netlog-viewer",
+  "displayName": "Netlog Viewer",
+  "description": "View Chromium net-export (NetLog) files. A from-scratch F# reimplementation of the Chromium netlog_viewer.",
+  "version": "0.0.1",
+  "publisher": "tmidorikawa",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "netlog",
+    "net-export",
+    "net-internals",
+    "chromium",
+    "network"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "netlogViewer.editor",
+        "displayName": "Netlog Viewer",
+        "selector": [
+          { "filenamePattern": "*.netlog" },
+          { "filenamePattern": "*.netlog.json" },
+          { "filenamePattern": "*.netlog.json.gz" },
+          { "filenamePattern": "*net-export*.json" },
+          { "filenamePattern": "*net-export*.json.gz" },
+          { "filenamePattern": "*net_log*.json" },
+          { "filenamePattern": "*netlog*.json" }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "netlogViewer.openFile",
+        "title": "Open File",
+        "category": "Netlog Viewer"
+      }
+    ]
+  },
+  "scripts": {
+    "fable:extension": "dotnet fable src/Extension --outDir build/extension",
+    "fable:webview": "dotnet fable src/Webview --outDir build/webview",
+    "fable": "npm run fable:extension && npm run fable:webview",
+    "bundle:extension": "esbuild build/extension/Extension.js --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "bundle:webview": "esbuild build/webview/App.js --bundle --format=iife --outfile=dist/webview.js",
+    "bundle": "npm run bundle:extension && npm run bundle:webview",
+    "build": "npm run fable && npm run bundle",
+    "fable:tests": "dotnet fable tests/Core.Tests --outDir build/tests",
+    "bundle:tests": "esbuild build/tests/Tests.js --bundle --platform=node --format=cjs --outfile=build/core-tests.cjs",
+    "test": "npm run fable:tests && npm run bundle:tests && node build/core-tests.cjs",
+    "watch:webview": "dotnet fable watch src/Webview --outDir build/webview",
+    "clean": "dotnet fable clean src/Extension --outDir build/extension --yes && dotnet fable clean src/Webview --outDir build/webview --yes && dotnet fable clean tests/Core.Tests --outDir build/tests --yes",
+    "package": "npm run build && vsce package --no-rewrite-relative-links --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0"
+  }
+}

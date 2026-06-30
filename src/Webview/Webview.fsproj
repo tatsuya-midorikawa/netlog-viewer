@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Dom.fs" />
+    <Compile Include="TablePrinter.fs" />
+    <Compile Include="View.fs" />
+    <Compile Include="TabSwitcher.fs" />
+    <Compile Include="Shell.fs" />
+    <Compile Include="ImportView.fs" />
+    <Compile Include="SourceFilterParser.fs" />
+    <Compile Include="LogViewPainter.fs" />
+    <Compile Include="DetailsView.fs" />
+    <Compile Include="ResizableVerticalSplitView.fs" />
+    <Compile Include="EventsView.fs" />
+    <Compile Include="InfoViews.fs" />
+    <Compile Include="Timeline.fs" />
+    <Compile Include="App.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Core/Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+  </ItemGroup>
+
+</Project>

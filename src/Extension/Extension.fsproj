@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Vscode.fs" />
+    <Compile Include="Node.fs" />
+    <Compile Include="NetlogEditor.fs" />
+    <Compile Include="Extension.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Core/Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+  </ItemGroup>
+
+</Project>

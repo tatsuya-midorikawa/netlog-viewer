@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Tests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Core/Core.fsproj" />
+    <ProjectReference Include="../../src/Webview/Webview.fsproj" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+  </ItemGroup>
+
+</Project>

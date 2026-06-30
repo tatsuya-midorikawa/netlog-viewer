@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <DisableImplicitFSharpCoreReference>false</DisableImplicitFSharpCoreReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Json.fs" />
+    <Compile Include="ProxyFormatter.fs" />
+    <Compile Include="Model.fs" />
+    <Compile Include="TimeUtil.fs" />
+    <Compile Include="Constants.fs" />
+    <Compile Include="LogGrouper.fs" />
+    <Compile Include="SourceGrouping.fs" />
+    <Compile Include="LogParser.fs" />
+    <Compile Include="Wire.fs" />
+    <Compile Include="Library.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+  </ItemGroup>
+
+</Project>

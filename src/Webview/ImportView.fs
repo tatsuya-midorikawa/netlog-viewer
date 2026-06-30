@@ -1,0 +1,47 @@
+/// Port of import_view.js (the loaded-log metadata pane): export date, capture
+/// mode, Chrome build info, OS, command line, and user comments.
+module Netlog.Webview.ImportView
+
+open Netlog.Core
+open Netlog.Webview.Dom
+open Netlog.Webview.View
+
+let tabId = "import"
+let tabName = "Import"
+
+type ImportView(root: Element) =
+    inherit ViewBase(root)
+
+    override _.OnLoadLogFinish(model: obj) : bool =
+        clear root
+        let clientInfo = Json.get model "clientInfo"
+        let constants = Json.get model "constants"
+        let str (o: obj) (k: string) = Json.tryString o k |> Option.defaultValue ""
+
+        let addRow (label: string) (value: string) =
+            let row = addNode root "div"
+            row.className <- "nv-info-row"
+            (addNodeWithText row "span" label).className <- "nv-label"
+            (addNodeWithText row "span" value).className <- "nv-value"
+
+        let numericDate = Json.tryNumber model "numericDate" |> Option.defaultValue 0.0
+        addRow "Export date:" (TimeUtil.dateToStringMs numericDate)
+        addRow "Capture mode:" (let m = str constants "logCaptureMode" in if m = "" then "(Not Recorded)" else m)
+        addRow "Name:" (str clientInfo "name")
+        addRow "Version:" (str clientInfo "version")
+        addRow "Official:" (str clientInfo "official")
+        addRow "CL:" (str clientInfo "cl")
+        addRow "Version mod:" (str clientInfo "version_mod")
+        addRow "OS:" (str clientInfo "os_type")
+        addRow "Command line:" (str clientInfo "command_line")
+
+        let comments = Json.tryString model "userComments" |> Option.defaultValue ""
+        if comments <> "" then
+            addRow "User comments:" comments
+
+        true
+
+let create () : ImportView =
+    let root = createElement "div"
+    root.className <- "nv-view nv-import"
+    ImportView(root)

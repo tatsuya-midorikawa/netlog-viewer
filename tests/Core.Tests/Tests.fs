@@ -1,0 +1,184 @@
+/// Fable -> Node test harness for the Core NetLog parser. Runs at module load,
+/// prints results, and exits non-zero on failure (so `npm test` reports failures).
+module Netlog.Core.Tests.Main
+
+open Fable.Core
+open Netlog.Core
+
+[<Emit("require('fs').readFileSync($0, 'utf8')")>]
+let readFile (path: string) : string = jsNative
+
+[<Emit("process.exit($0)")>]
+let exitProcess (code: int) : unit = jsNative
+
+let mutable failures = 0
+
+let check (name: string) (cond: bool) : unit =
+    if cond then
+        printfn "  ok   %s" name
+    else
+        eprintfn "  FAIL %s" name
+        failures <- failures + 1
+
+let checkEq (name: string) (expected: 'a) (actual: 'a) : unit =
+    if expected = actual then
+        printfn "  ok   %s" name
+    else
+        eprintfn "  FAIL %s (expected %A, got %A)" name expected actual
+        failures <- failures + 1
+
+let isError (r: Result<'a, 'b>) : bool =
+    match r with
+    | Error _ -> true
+    | Ok _ -> false
+
+let wstr (o: obj) (k: string) : string = Json.tryString o k |> Option.defaultValue ""
+let wnum (o: obj) (k: string) : float = Json.tryNumber o k |> Option.defaultValue 0.0
+
+let mkFilterSource id typeName desc err active : Netlog.Webview.SourceFilterParser.FilterSource =
+    { Id = id; TypeName = typeName; Description = desc; IsError = err; IsActive = active; SearchText = (fun () -> "") }
+
+// A truncated --log-net-log style dump (no closing "]}", trailing ",\n").
+let truncatedDump =
+    "{\"constants\":{\"logFormatVersion\":1,"
+    + "\"logEventTypes\":{\"REQUEST_ALIVE\":1},"
+    + "\"logEventPhase\":{\"PHASE_NONE\":0,\"PHASE_BEGIN\":1,\"PHASE_END\":2},"
+    + "\"logSourceType\":{\"NONE\":0,\"URL_REQUEST\":1},"
+    + "\"loadFlag\":{\"NORMAL\":0},\"netError\":{\"ERR_FAILED\":-2},"
+    + "\"addressFamily\":{\"UNSPEC\":0},\"timeTickOffset\":\"1700000000000\","
+    + "\"clientInfo\":{\"numericDate\":1700000000000}},"
+    + "\"events\":[\n"
+    + "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1000\",\"phase\":1,\"params\":{\"url\":\"https://a/\"}},\n"
+
+// --- Valid full dump (samples/sample.netlog.json) ---
+printfn "Parser: valid sample"
+
+match LogParser.loadLogFile (readFile "samples/sample.netlog.json") with
+| Error e ->
+    check "sample loads" false
+    eprintfn "%s" e
+| Ok log ->
+    checkEq "event count" 3 log.Events.Length
+    checkEq "source count" 1 log.Sources.Length
+    let s = log.Sources.[0]
+    checkEq "source type name" "URL_REQUEST" (SourceGrouping.sourceTypeNameOf log.Constants s)
+    checkEq "description" "https://example.com/" s.Description
+    check "source inactive (completed)" s.IsInactive
+    check "no error" (not s.IsError)
+    checkEq "startTicks" 1000.0 (SourceGrouping.startTicks s)
+    checkEq "duration" 80.0 (SourceGrouping.duration log.LastEventTicks s)
+    checkEq "numericDate" 1700000000000.0 log.NumericDate
+    checkEq "eventTypeName 1" "REQUEST_ALIVE" (Constants.eventTypeName log.Constants 1)
+
+    // Wire model (host -> webview DTO)
+    let wire = Wire.build "sample.netlog.json" log
+    checkEq "wire type" "load" (wstr wire "type")
+    checkEq "wire fileName" "sample.netlog.json" (wstr wire "fileName")
+    checkEq "wire eventCount" 3 (int (wnum (Json.get wire "stats") "eventCount"))
+    let wsources = Json.get wire "sources"
+    checkEq "wire sources length" 1 (Json.length wsources)
+    let ws0 = Json.item wsources 0
+    checkEq "wire source typeName" "URL_REQUEST" (wstr ws0 "typeName")
+    checkEq "wire source description" "https://example.com/" (wstr ws0 "description")
+    check "wire source active=false" (not (Json.isTruthy (Json.get ws0 "isActive")))
+    checkEq "wire events length" 3 (Json.length (Json.get wire "events"))
+    checkEq
+        "wire eventTypeNames[1]"
+        "REQUEST_ALIVE"
+        (wstr (Json.get (Json.get wire "constants") "eventTypeNames") "1")
+
+// --- Error + fallback paths ---
+printfn "Parser: error and fallback paths"
+
+check "non-JSON -> Error" (isError (LogParser.loadLogFile "not json at all"))
+
+match LogParser.loadLogFile "{}" with
+| Error e -> check "empty object mentions constants" (e.Contains "Invalid constants object")
+| Ok _ -> check "empty object -> Error" false
+
+match LogParser.loadLogFile truncatedDump with
+| Ok log ->
+    checkEq "truncated event count" 1 log.Events.Length
+    check "truncated warning present" (log.LoadLog.Contains "truncated")
+| Error e ->
+    check "truncated loads" false
+    eprintfn "%s" e
+
+// --- Source filter parser ---
+printfn "SourceFilterParser"
+let urlReq = mkFilterSource 1 "URL_REQUEST" "https://example.com/" false true
+let sockErr = mkFilterSource 2 "SOCKET" "1.2.3.4" true false
+checkEq "type: matches" true ((Netlog.Webview.SourceFilterParser.parse "type:url_request").Filter urlReq)
+checkEq "type: rejects" false ((Netlog.Webview.SourceFilterParser.parse "type:url_request").Filter sockErr)
+checkEq "is:error matches" true ((Netlog.Webview.SourceFilterParser.parse "is:error").Filter sockErr)
+checkEq "is:error rejects" false ((Netlog.Webview.SourceFilterParser.parse "is:error").Filter urlReq)
+checkEq "neg -is:error" false ((Netlog.Webview.SourceFilterParser.parse "-is:error").Filter sockErr)
+checkEq "id list matches" true ((Netlog.Webview.SourceFilterParser.parse "id:2,5").Filter sockErr)
+checkEq "id list rejects" false ((Netlog.Webview.SourceFilterParser.parse "id:2,5").Filter urlReq)
+checkEq "text desc matches" true ((Netlog.Webview.SourceFilterParser.parse "example").Filter urlReq)
+checkEq "sort duration" (Some("duration", false)) (Netlog.Webview.SourceFilterParser.parse "sort:duration").Sort
+checkEq "sort backwards" (Some("id", true)) (Netlog.Webview.SourceFilterParser.parse "-sort:id").Sort
+
+// --- ProxyFormatter ---
+printfn "ProxyFormatter"
+checkEq "proxy direct" "Use DIRECT connections." (ProxyFormatter.proxySettingsToString (Json.parse "{}"))
+checkEq
+    "proxy single"
+    "Proxy server: 1.2.3.4:8080"
+    (ProxyFormatter.proxySettingsToString (Json.parse "{\"single_proxy\":\"1.2.3.4:8080\"}"))
+checkEq "proxy autodetect" "Auto-detect" (ProxyFormatter.proxySettingsToString (Json.parse "{\"auto_detect\":true}"))
+
+// --- Constants: cert path-builder digest policy ---
+printfn "Constants: digest policy"
+let digestConstants =
+    Constants.decode (Json.parse "{\"certPathBuilderDigestPolicy\":{\"kAllAlgorithms\":1,\"kAllowSha1\":2}}")
+checkEq "digest_policy name 2" "kAllowSha1" (Constants.keyWithValue digestConstants.CertPathBuilderDigestPolicy 2)
+
+// --- Source filter: search over painted event text ---
+printfn "SourceFilterParser: painted-text search"
+let searchableSrc: Netlog.Webview.SourceFilterParser.FilterSource =
+    { Id = 9
+      TypeName = "URL_REQUEST"
+      Description = "https://nomatch/"
+      IsError = false
+      IsActive = true
+      SearchText = (fun () -> "Authorization: Bearer SECRETTOKEN") }
+checkEq "text search via painted text" true ((Netlog.Webview.SourceFilterParser.parse "secrettoken").Filter searchableSrc)
+checkEq "text search no false-positive" false ((Netlog.Webview.SourceFilterParser.parse "notpresent").Filter searchableSrc)
+
+// --- LogViewPainter: bytes rendering (hex dump vs. searchable text) ---
+printfn "LogViewPainter: bytes rendering"
+
+match LogParser.loadLogFile (readFile "samples/sample.netlog.json") with
+| Error e ->
+    check "painter constants load" false
+    eprintfn "%s" e
+| Ok log ->
+    // "QUJD" is base64 for "ABC".
+    let bytesEvent: Model.Event =
+        { Index = 0
+          Time = 1000.0
+          Type = 1
+          Phase = 0
+          SourceId = 1
+          SourceType = 1
+          StartTime = None
+          Params = Some(Json.parse "{\"bytes\":\"QUJD\"}") }
+
+    let searchTp =
+        Netlog.Webview.LogViewPainter.createLogEntryTablePrinter log.Constants [| bytesEvent |] 1000.0 0.0 None true
+    check "bytes searchable contains ascii" ((searchTp.ToTextString 0).Contains "ABC")
+
+    let hexTp =
+        Netlog.Webview.LogViewPainter.createLogEntryTablePrinter log.Constants [| bytesEvent |] 1000.0 0.0 None false
+    let hexText = hexTp.ToTextString 0
+    check "bytes hex contains hex octets" (hexText.Contains "41 42 43")
+    check "bytes hex contains ascii gutter" (hexText.Contains "ABC")
+
+printfn ""
+
+if failures > 0 then
+    eprintfn "%d test(s) failed" failures
+    exitProcess 1
+else
+    printfn "All tests passed"
