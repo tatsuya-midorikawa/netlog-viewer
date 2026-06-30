@@ -1,0 +1,68 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e3a8a"/>
+      <stop offset="0.5" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.28" cy="0.2" r="0.9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.4" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="0.5" stdDeviation="2.6" flood-color="#06205c" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="128" height="128" rx="27" fill="url(#bg)"/>
+  <rect x="0" y="0" width="128" height="128" rx="27" fill="url(#sheen)"/>
+
+  <!-- Network edges -->
+  <g stroke="#e0f2fe" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round">
+    <line x1="64" y1="64" x2="32" y2="36"/>
+    <line x1="64" y1="64" x2="98" y2="34"/>
+    <line x1="64" y1="64" x2="32" y2="94"/>
+    <line x1="64" y1="64" x2="98" y2="92"/>
+    <line x1="32" y1="36" x2="98" y2="34"/>
+  </g>
+
+  <!-- Signal / log pulse -->
+  <polyline points="12,64 28,64 36,46 46,82 56,64 64,64 72,64 82,48 92,80 100,64 116,64"
+            fill="none" stroke="#a5f3fc" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- Satellite nodes -->
+  <g fill="#ffffff">
+    <circle cx="32" cy="36" r="6.5"/>
+    <circle cx="98" cy="34" r="6.5"/>
+    <circle cx="32" cy="94" r="6"/>
+    <circle cx="98" cy="92" r="6"/>
+  </g>
+
+  <!-- Chromium browser mark (network hub) -->
+  <g filter="url(#shadow)">
+    <!-- pinwheel sectors (120 deg each) -->
+    <path d="M64 64 L80.45 73.5 A19 19 0 0 0 64 45 Z" fill="#93b9fb"/>
+    <path d="M64 64 L64 45 A19 19 0 0 0 47.55 73.5 Z" fill="#4285f4"/>
+    <path d="M64 64 L47.55 73.5 A19 19 0 0 0 80.45 73.5 Z" fill="#1b66d6"/>
+    <!-- white spokes -->
+    <g stroke="#ffffff" stroke-width="2.6" stroke-linecap="round">
+      <line x1="64" y1="64" x2="64" y2="45"/>
+      <line x1="64" y1="64" x2="47.55" y2="73.5"/>
+      <line x1="64" y1="64" x2="80.45" y2="73.5"/>
+    </g>
+    <!-- outer rim + center ball -->
+    <circle cx="64" cy="64" r="19" fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-width="1.5"/>
+    <circle cx="64" cy="64" r="9.5" fill="#ffffff"/>
+    <circle cx="64" cy="64" r="7" fill="#0b57d0"/>
+    <circle cx="60.7" cy="60.7" r="2.3" fill="#ffffff" fill-opacity="0.45"/>
+  </g>
+</svg>

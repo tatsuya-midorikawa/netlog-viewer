@@ -1,145 +1,143 @@
 # netlog-viewer
 
-`netlog-viewer` は、Chromium 系ブラウザーで採取できる `net-export`（NetLog）ログを閲覧するための Visual Studio Code 拡張機能です。
-Chromium の `net-internals` / `netlog_viewer` 相当のビューアーを **F# でフルスクラッチ再実装**し、VS Code のカスタムエディター上で動作します。
+`netlog-viewer` is a Visual Studio Code extension for viewing `net-export` (NetLog) logs captured from Chromium-based browsers.
 
 ---
 
-## 目次
+## Table of Contents
 
 - [netlog-viewer](#netlog-viewer)
-  - [目次](#目次)
-  - [主な機能](#主な機能)
-  - [動作要件](#動作要件)
-  - [インストール](#インストール)
-    - [Visual Studio Code Marketplace から](#visual-studio-code-marketplace-から)
-    - [VSIX ファイルから](#vsix-ファイルから)
-  - [使い方](#使い方)
-  - [対応ファイル](#対応ファイル)
-  - [コマンド](#コマンド)
-  - [設定](#設定)
-  - [制限事項](#制限事項)
-  - [ロードマップ](#ロードマップ)
-  - [コントリビュート](#コントリビュート)
-  - [スポンサー](#スポンサー)
-  - [ライセンス](#ライセンス)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+    - [From the Visual Studio Code Marketplace](#from-the-visual-studio-code-marketplace)
+    - [From a VSIX file](#from-a-vsix-file)
+  - [Usage](#usage)
+  - [Supported Files](#supported-files)
+  - [Commands](#commands)
+  - [Settings](#settings)
+  - [Limitations](#limitations)
+  - [Roadmap](#roadmap)
+  - [Contributing](#contributing)
+  - [Sponsors](#sponsors)
+  - [License](#license)
 
 ---
 
-## 主な機能
+## Features
 
-- **NetLog ログのビューアー**: `net-export` で採取した `.json` ログを、VS Code 内のカスタムエディターで閲覧できます。
-- **14 タブ構成**（オリジナルの `netlog_viewer` 相当）:
-  - **Import** — エクスポート日時・キャプチャモード・ブラウザー/OS 情報・コマンドライン・ユーザーコメント
-  - **Events** — ソース単位にグルーピングされたイベント一覧。フィルタ（`type:` / `id:` / `is:active|error` / `sort:`）・選択・イベントトレース詳細（`t=` / `st=` / `[dt=]`）
-  - **Timeline** — ソケット数・リクエスト数・転送バイト数などの時系列をキャンバスに描画（ホイールでズーム、ドラッグでパン）
-  - **Proxy / DNS / Sockets / StreamPool / Alt-Svc / HTTP/2 / QUIC / Reporting / Cache / Modules / Prerender** — 各サブシステムの状態テーブル
-- **読み取り専用・完全オフライン**: ファイルへの書き込みや外部ネットワーク通信は行いません。
-- **外部ランタイムライブラリ不使用**: パーサー・ビューアーともに標準ライブラリのみでフルスクラッチ実装（詳細は [DEVELOPMENT.md](./DEVELOPMENT.md)）。
-- **`.json` / `.netlog` / `.gz`（gzip）** に対応。
-
----
-
-## 動作要件
-
-- Visual Studio Code `1.90.0` 以降
-- 追加のランタイムや外部アプリケーションのインストールは **不要**
+- **NetLog log viewer**: View `.json` logs captured with `net-export` in a custom editor inside VS Code.
+- **14-tab layout**:
+  - **Import** — Export date and time, capture mode, browser/OS information, command line, and user comments.
+  - **Events** — A list of events grouped by source, with filtering (`type:` / `id:` / `is:active|error` / `sort:`), selection, and event trace details (`t=` / `st=` / `[dt=]`).
+  - **Timeline** — Time-series data such as socket count, request count, and bytes transferred, rendered on a canvas (scroll to zoom, drag to pan).
+  - **Proxy / DNS / Sockets / StreamPool / Alt-Svc / HTTP/2 / QUIC / Reporting / Cache / Modules / Prerender** — Status tables for each subsystem.
+- **Read-only and fully offline**: Never writes to files and never communicates over the network.
+- **No external runtime libraries**: Both the parser and the viewer are built entirely from scratch using only the standard library (see [DEVELOPMENT.md](./DEVELOPMENT.md) for details).
+- **Supports `.json` / `.netlog` / `.gz` (gzip)**.
 
 ---
 
-## インストール
+## Requirements
 
-### Visual Studio Code Marketplace から
+- Visual Studio Code `1.90.0` or later
+- **No** additional runtimes or external applications required
 
-1. VS Code のサイドバーから **拡張機能（Extensions）** ビューを開く（`Ctrl+Shift+X` / `⌘+Shift+X`）
-2. `Netlog Viewer` を検索
-3. **Install** をクリック
+---
 
-### VSIX ファイルから
+## Installation
+
+### From the Visual Studio Code Marketplace
+
+1. Open the **Extensions** view from the VS Code sidebar (`Ctrl+Shift+X` / `⌘+Shift+X`).
+2. Search for `Netlog Viewer`.
+3. Click **Install**.
+
+### From a VSIX file
 
 ```bash
 code --install-extension netlog-viewer-<version>.vsix
 ```
 
-または、コマンドパレット（`Ctrl+Shift+P` / `⌘+Shift+P`）から
-**「Extensions: Install from VSIX...」** を実行し、`.vsix` ファイルを選択します。
+Alternatively, run **"Extensions: Install from VSIX..."** from the Command Palette (`Ctrl+Shift+P` / `⌘+Shift+P`) and select the `.vsix` file.
 
 ---
 
-## 使い方
+## Usage
 
-1. Chromium 系ブラウザーでログを採取します。
-   - Chrome: `chrome://net-export/`、Microsoft Edge: `edge://net-export/`
-   - **Start Logging To Disk** で保存先 `.json` を指定し、再現操作を行ったのち **Stop Logging** を押します。
-2. 採取した `.json` を VS Code で開きます。
-   - ファイル名が[対応ファイル](#対応ファイル)のパターンに一致する場合は、自動的に Netlog Viewer で開きます。
-   - 一致しない `.json` を開きたい場合は、エクスプローラーでファイルを右クリック →
-     **「Open With…」→ Netlog Viewer** を選択するか、コマンド **「Netlog Viewer: Open File」** を実行します。
-3. 左側のタブを切り替えて各サブシステムの状態を確認します。Events タブではフィルタ入力でソースを絞り込み、行を選択すると右ペインにイベントトレースが表示されます。
+1. Capture a log in a Chromium-based browser.
+   - Chrome: `chrome://net-export/`, Microsoft Edge: `edge://net-export/`
+   - Click **Start Logging To Disk**, choose a destination `.json` file, reproduce the issue, and then click **Stop Logging**.
+2. Open the captured `.json` file in VS Code.
+   - If the file name matches one of the [supported file](#supported-files) patterns, it opens automatically in Netlog Viewer.
+   - To open a `.json` file that does not match, right-click the file in the Explorer and choose
+     **"Open With…" → Netlog Viewer**, or run the **"Netlog Viewer: Open File"** command.
+3. Switch between the tabs on the left to inspect the state of each subsystem. On the Events tab, type a filter to narrow down sources, and select a row to display the event trace in the right pane.
 
 ---
 
-## 対応ファイル
+## Supported Files
 
-カスタムエディターは、以下のファイル名パターンに自動で関連付きます（`.json` を一律には乗っ取りません）。
+The custom editor automatically associates with the following file name patterns (it does not take over every `.json` file indiscriminately):
 
 - `*.netlog`
-- `*.netlog.json`（および `*.netlog.json.gz`）
-- `*net-export*.json`（および `*net-export*.json.gz`）
+- `*.netlog.json` (and `*.netlog.json.gz`)
+- `*net-export*.json` (and `*net-export*.json.gz`)
 - `*net_log*.json`
 - `*netlog*.json`
 
-`.gz`（gzip 圧縮）は自動的に展開されます。上記に一致しないファイルは「Netlog Viewer: Open File」コマンドから開けます。
+`.gz` (gzip-compressed) files are decompressed automatically. Files that do not match the patterns above can be opened with the "Netlog Viewer: Open File" command.
 
 ---
 
-## コマンド
+## Commands
 
-コマンドパレット（`Ctrl+Shift+P` / `⌘+Shift+P`）から利用できます。
+The following command is available from the Command Palette (`Ctrl+Shift+P` / `⌘+Shift+P`).
 
-| コマンド | コマンドID | 説明 |
+| Command | Command ID | Description |
 | --- | --- | --- |
-| Netlog Viewer: Open File | `netlogViewer.openFile` | ファイル選択ダイアログから NetLog ログを開きます。 |
+| Netlog Viewer: Open File | `netlogViewer.openFile` | Opens a NetLog log from a file selection dialog. |
 
 ---
 
-## 設定
+## Settings
 
-現在、ユーザー設定項目はありません。描画上限や既定タブなどの設定は[ロードマップ](#ロードマップ)で検討しています。
-
----
-
-## 制限事項
-
-- **エクスポート済みログの閲覧専用**です。`net-internals` のようなライブブラウザーへのリアルタイム接続・取得には対応していません（情報タブはログに含まれる `polledData` を表示し、データが無いタブは自動的に非表示になります）。
-- 対応する圧縮形式は **gzip（`.gz`）のみ**で、`.zip` には対応していません。
-- 一部の情報タブ（Proxy 設定 / DNS 設定 / Reporting の clients・NEL）は、現状 JSON を整形して表示します。
-- 読み取り専用のため、ログの編集・保存は行えません。
+There are currently no user-configurable settings. Options such as rendering limits and the default tab are being considered in the [Roadmap](#roadmap).
 
 ---
 
-## ロードマップ
+## Limitations
 
-- [ ] ユーザー設定（描画上限・既定タブなど）
-- [ ] 大容量ログ向けの仮想化・段階的描画
-- [ ] 情報タブの詳細整形と、イベントソースへのリンク
-- [ ] `.zip` 形式への対応
-
----
-
-## コントリビュート
-
-仕様・設計やビルド／デバッグ手順は [DEVELOPMENT.md](./DEVELOPMENT.md)、Marketplace への公開は [PUBLISHING.md](./PUBLISHING.md) を参照してください。
+- **For viewing exported logs only.** Real-time connection to and capture from a live browser (as with `net-internals`) is not supported. (The information tabs display the `polledData` included in the log, and tabs with no data are hidden automatically.)
+- The only supported compression format is **gzip (`.gz`)**; `.zip` is not supported.
+- Some information tabs (Proxy settings / DNS settings / Reporting clients and NEL) currently display formatted JSON.
+- Because it is read-only, logs cannot be edited or saved.
 
 ---
 
-## スポンサー
+## Roadmap
 
-本プロジェクトの開発を応援していただける方は、[GitHub Sponsors](https://github.com/sponsors/tatsuya-midorikawa) からのご支援を歓迎します。
-いただいたご支援は、機能の改善や継続的なメンテナンスに活用させていただきます。
+- [ ] User settings (rendering limits, default tab, etc.)
+- [ ] Virtualization and progressive rendering for large logs
+- [ ] More detailed formatting of information tabs and links to event sources
+- [ ] Support for the `.zip` format
 
 ---
 
-## ライセンス
+## Contributing
 
-本プロジェクトは [MIT License](./LICENSE) の下で公開されています。
+For specifications and design as well as build/debug instructions, see [DEVELOPMENT.md](./DEVELOPMENT.md). For publishing to the Marketplace, see [PUBLISHING.md](./PUBLISHING.md).
+
+---
+
+## Sponsors
+
+If you would like to support the development of this project, contributions via [GitHub Sponsors](https://github.com/sponsors/tatsuya-midorikawa) are warmly welcomed.
+Your support will be used to improve features and maintain the project over time.
+
+---
+
+## License
+
+This project is released under the [MIT License](./LICENSE).

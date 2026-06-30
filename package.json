@@ -5,6 +5,16 @@
   "version": "0.0.1",
   "publisher": "tmidorikawa",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tatsuya-midorikawa/netlog-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tatsuya-midorikawa/netlog-viewer/issues"
+  },
+  "homepage": "https://github.com/tatsuya-midorikawa/netlog-viewer#readme",
+  "qna": "marketplace",
   "engines": {
     "vscode": "^1.90.0"
   },
