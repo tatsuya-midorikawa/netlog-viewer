@@ -2,10 +2,14 @@
   "name": "netlog-viewer",
   "displayName": "Netlog Viewer",
   "description": "View Chromium net-export (NetLog) files. A from-scratch F# reimplementation of the Chromium netlog_viewer.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "tmidorikawa",
   "license": "MIT",
   "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0f2741",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/tatsuya-midorikawa/netlog-viewer.git"
@@ -14,6 +18,9 @@
     "url": "https://github.com/tatsuya-midorikawa/netlog-viewer/issues"
   },
   "homepage": "https://github.com/tatsuya-midorikawa/netlog-viewer#readme",
+  "sponsor": {
+    "url": "https://github.com/sponsors/tatsuya-midorikawa"
+  },
   "qna": "marketplace",
   "engines": {
     "vscode": "^1.90.0"
@@ -55,6 +62,12 @@
         "category": "Netlog Viewer"
       }
     ]
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
   },
   "scripts": {
     "fable:extension": "dotnet fable src/Extension --outDir build/extension",

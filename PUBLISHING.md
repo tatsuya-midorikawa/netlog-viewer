@@ -67,7 +67,7 @@ npx vsce login tmidorikawa
    npm test
    ```
 
-2. `package.json` の `version` を更新します（[バージョニング](#バージョニング)参照）。
+2. `package.json` の `version` を更新し、[CHANGELOG.md](./CHANGELOG.md) に今回のバージョンの変更点を追記します（[バージョニング](#バージョニング)参照）。
 
 3. `.vsix` を生成します。
 
@@ -123,6 +123,7 @@ code --install-extension netlog-viewer-<version>.vsix
 
 - [ ] `npm run build` と `npm test` が成功する
 - [ ] `package.json` の `version` を更新した
+- [ ] [CHANGELOG.md](./CHANGELOG.md) に今回のバージョンの変更点を追記した
 - [ ] [README.md](./README.md) の機能・制限事項・ロードマップが最新
 - [ ] `npx vsce ls` で同梱物が `dist/` と `media/` 等に限定されている
 - [ ] `.vsix` をローカルインストールして主要タブの表示を確認した
