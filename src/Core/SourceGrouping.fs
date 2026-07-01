@@ -11,7 +11,13 @@ type SourceEntry =
     { Entries: ResizeArray<Event>
       mutable Description: string
       mutable IsError: bool
-      mutable IsInactive: bool }
+      mutable IsInactive: bool
+      // Cache for getStartEntry below. Valid whenever the source type is not
+      // FILESTREAM/DOWNLOAD (see getStartEntry): the result then only depends on
+      // Entries.[0]/[1], which are fixed once there are 2+ entries, so it is safe to
+      // compute once and reuse for every later event on a busy source instead of
+      // re-deriving it (a Dictionary lookup + several string comparisons) each time.
+      mutable StartCache: Event option }
 
 let sourceId (se: SourceEntry) : int = se.Entries.[0].SourceId
 let sourceType (se: SourceEntry) : int = se.Entries.[0].SourceType
@@ -35,43 +41,63 @@ let private findLastStartByType (c: Constants) (se: SourceEntry) (typeName: stri
         i <- i - 1
     result
 
-/// Port of SourceEntry.getStartEntry_ (skips REQUEST_ALIVE wrappers, handles
-/// FILESTREAM/DOWNLOAD and a few socket/cert start markers).
+/// Core derivation of SourceEntry.getStartEntry_ (skips REQUEST_ALIVE wrappers,
+/// handles FILESTREAM/DOWNLOAD and a few socket/cert start markers). Split out from
+/// `getStartEntry` so the caching wrapper below can call it only when needed.
+let private computeStartEntry (c: Constants) (se: SourceEntry) (st: string) (e0: Event) : Event option =
+    let fileStreamHit = if st = "FILESTREAM" then findByType c se "FILE_STREAM_OPEN" else None
+
+    let downloadHit =
+        if st = "DOWNLOAD" then
+            match findLastStartByType c se "DOWNLOAD_FILE_RENAMED" with
+            | Some e -> Some e
+            | None ->
+                match findByType c se "DOWNLOAD_FILE_OPENED" with
+                | Some e -> Some e
+                | None -> findByType c se "DOWNLOAD_ITEM_ACTIVE"
+        else
+            None
+
+    match fileStreamHit with
+    | Some e -> Some e
+    | None ->
+        match downloadHit with
+        | Some e -> Some e
+        | None ->
+            if se.Entries.Count >= 2 then
+                let t1 = eventTypeName c se.Entries.[1].Type
+                if t1 = "UDP_CONNECT" || t1 = "IPV6_PROBE_RUNNING"
+                   || t1 = "SOCKET_POOL_CONNECT_JOB_CREATED" || t1 = "CERT_VERIFY_PROC" then
+                    Some se.Entries.[1]
+                else
+                    Some e0
+            else
+                Some e0
+
+/// Port of SourceEntry.getStartEntry_. For source types other than FILESTREAM/
+/// DOWNLOAD, `computeStartEntry` only ever reads Entries.[0]/[1], both fixed once
+/// Count >= 2, so once Count > 2 the previously cached result is reused verbatim
+/// instead of recomputed. This is called twice per event in `update` below (once
+/// before, once after appending), so for a busy source this turns almost all of
+/// those calls into a single field read.
 let getStartEntry (c: Constants) (se: SourceEntry) : Event option =
     if se.Entries.Count < 1 then
         None
     else
         let e0 = se.Entries.[0]
         let st = sourceTypeName c e0.SourceType
-
-        let fileStreamHit = if st = "FILESTREAM" then findByType c se "FILE_STREAM_OPEN" else None
-
-        let downloadHit =
-            if st = "DOWNLOAD" then
-                match findLastStartByType c se "DOWNLOAD_FILE_RENAMED" with
-                | Some e -> Some e
-                | None ->
-                    match findByType c se "DOWNLOAD_FILE_OPENED" with
-                    | Some e -> Some e
-                    | None -> findByType c se "DOWNLOAD_ITEM_ACTIVE"
-            else
-                None
-
-        match fileStreamHit with
-        | Some e -> Some e
-        | None ->
-            match downloadHit with
-            | Some e -> Some e
+        let cacheable = st <> "FILESTREAM" && st <> "DOWNLOAD"
+        if cacheable && se.Entries.Count > 2 then
+            match se.StartCache with
+            | Some _ as cached -> cached
             | None ->
-                if se.Entries.Count >= 2 then
-                    let t1 = eventTypeName c se.Entries.[1].Type
-                    if t1 = "UDP_CONNECT" || t1 = "IPV6_PROBE_RUNNING"
-                       || t1 = "SOCKET_POOL_CONNECT_JOB_CREATED" || t1 = "CERT_VERIFY_PROC" then
-                        Some se.Entries.[1]
-                    else
-                        Some e0
-                else
-                    Some e0
+                let result = computeStartEntry c se st e0
+                se.StartCache <- result
+                result
+        else
+            let result = computeStartEntry c se st e0
+            if cacheable then se.StartCache <- result
+            result
 
 let private descOf (index: Dictionary<int, SourceEntry>) (id: int) : string =
     match index.TryGetValue id with
@@ -213,7 +239,8 @@ let create (c: Constants) (index: Dictionary<int, SourceEntry>) (first: Event) :
         { Entries = ResizeArray<Event>()
           Description = ""
           IsError = false
-          IsInactive = isInactive }
+          IsInactive = isInactive
+          StartCache = None }
 
     update c index se first
     se

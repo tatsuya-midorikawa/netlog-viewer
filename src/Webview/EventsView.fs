@@ -51,6 +51,8 @@ type EventsView(root: Element, post: obj -> unit) as this =
     let rendered = ResizeArray<RenderedRow>()
     // On-demand event cache: sourceId -> its events (fetched when first selected).
     let fetched = System.Collections.Generic.Dictionary<int, Model.Event[]>()
+    // sourceId -> the source's full event count (so details can note any truncation).
+    let sourceTotal = System.Collections.Generic.Dictionary<int, int>()
     // A source-dependency link may target a source whose events aren't loaded yet;
     // remember it and scroll once its events arrive.
     let mutable pendingScrollId: int option = None
@@ -108,12 +110,18 @@ type EventsView(root: Element, post: obj -> unit) as this =
             |> Seq.choose (fun s ->
                 match fetched.TryGetValue s.Id with
                 | true, evs ->
+                    let total =
+                        match sourceTotal.TryGetValue s.Id with
+                        | true, t -> t
+                        | _ -> evs.Length
                     Some
                         { DetailSource.Id = s.Id
                           TypeName = s.TypeName
                           Description = s.Description
                           StartTicks = s.StartTicks
-                          Events = evs }
+                          Events = evs
+                          Total = total
+                          Truncated = total > evs.Length }
                 | _ -> None)
             |> Seq.toList
         details.SetData(constants, baseTime, logCreationTime, detailSources)
@@ -252,6 +260,7 @@ type EventsView(root: Element, post: obj -> unit) as this =
         logCreationTime <- Json.tryNumber model "numericDate"
 
         fetched.Clear()
+        sourceTotal.Clear()
         sources.Clear()
         rendered.Clear()
         clear tableBody
@@ -272,9 +281,11 @@ type EventsView(root: Element, post: obj -> unit) as this =
         true
 
     /// On-demand details response: cache the source's events and (re)render selection.
-    override this.OnSourceEvents(id: int, wireEvents: obj) =
+    override this.OnSourceEvents(id: int, data: obj) =
+        let wireEvents = Json.get data "events"
         let n = Json.length wireEvents
         fetched.[id] <- Array.init n (fun i -> toEvent (Json.item wireEvents i))
+        sourceTotal.[id] <- Json.tryNumber data "total" |> Option.defaultValue (float n) |> int
         this.RenderDetails()
 
 let create (post: obj -> unit) : EventsView =

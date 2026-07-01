@@ -107,6 +107,7 @@ The following command is available from the Command Palette (`Ctrl+Shift+P` / `â
 | Setting | Default | Description |
 | --- | --- | --- |
 | `netlogViewer.maxEvents` | `2000000` | Maximum number of events loaded from a single file. Larger files are streamed from disk and truncated at this many events (with a warning) so memory stays bounded. Set to `0` to load every event (may exhaust memory on very large logs). |
+| `netlogViewer.maxSourceDetailEvents` | `50000` | Maximum number of events shown in the detail pane for a single selected source. Sources with more events are truncated (with a note) so selecting a very active source stays responsive. |
 
 ---
 

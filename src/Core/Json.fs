@@ -3,6 +3,7 @@
 /// of Core so the domain logic stays readable.
 module Netlog.Core.Json
 
+open System.Collections.Generic
 open Fable.Core
 open Fable.Core.JsInterop
 
@@ -78,5 +79,10 @@ let toIntMap (o: obj) : Map<string, int> =
     else
         Map.empty
 
-let invertMap (m: Map<string, int>) : Map<int, string> =
-    m |> Map.toSeq |> Seq.map (fun (k, v) -> v, k) |> Map.ofSeq
+/// Inverted as a `Dictionary` (not `Map`): this is looked up per-event on the hot
+/// ingest path (`LogParser.ingestEvent`, `SourceGrouping`), where an O(1) lookup
+/// matters far more than structural equality/immutability.
+let invertMap (m: Map<string, int>) : Dictionary<int, string> =
+    let d = Dictionary<int, string>()
+    m |> Map.iter (fun k v -> d.[v] <- k)
+    d

@@ -11,7 +11,9 @@ type DetailSource =
       TypeName: string
       Description: string
       StartTicks: float
-      Events: Model.Event[] }
+      Events: Model.Event[]
+      Total: int
+      Truncated: bool }
 
 type DetailsView(root: Element) =
     let sourceElements = System.Collections.Generic.Dictionary<int, Element>()
@@ -44,6 +46,17 @@ type DetailsView(root: Element) =
 
             let startDate = TimeUtil.dateToStringMs (TimeUtil.convertTimeTicksToTime s.StartTicks)
             addNodeWithText p "div" ("Start Time: " + startDate) |> ignore
+
+            if s.Truncated then
+                let note =
+                    addNodeWithText
+                        p
+                        "div"
+                        (sprintf
+                            "Showing the first %d of %d events for this source (raise netlogViewer.maxSourceDetailEvents to see more)."
+                            s.Events.Length
+                            s.Total)
+                note.className <- "nv-detail-truncated"
 
             let tp = createLogEntryTablePrinter c s.Events s.StartTicks baseTime logCreationTime false
             tp.ToText(div, 0) |> ignore

@@ -1,8 +1,9 @@
 /// Streams a local NetLog file (optionally gzip-compressed) through the incremental
-/// JsonStreamScanner + StreamingParser, then hands the wire "load" message back. It
+/// ByteJsonScanner + StreamingParser, then hands the wire "load" message back. It
 /// never materialises the whole file as a single string, so it is not bound by V8's
 /// ~512 MB string limit, and the configurable event cap keeps memory bounded for
-/// arbitrarily large files.
+/// arbitrarily large files. Raw stream bytes are scanned directly (no whole-file
+/// UTF-8-to-UTF-16 decode pass); only each emitted value's own byte range is decoded.
 module Netlog.Extension.StreamLoader
 
 open Fable.Core.JsInterop
@@ -32,14 +33,13 @@ let load
         let fileStream = Node.createReadStream path
         let stream = if gz then Node.pipe fileStream (Node.createGunzip ()) else fileStream
 
-        let decoder = Node.createDecoder ()
         let st = StreamingParser.create maxEvents
 
         let scanner =
-            JsonStreamScanner.Scanner(
-                StreamingParser.pushConstantsJson st,
-                StreamingParser.pushEventJson st,
-                StreamingParser.pushTailJson st
+            ByteJsonScanner.Scanner(
+                (fun buf s e -> StreamingParser.pushConstantsJson st (ByteJsonScanner.decodeByteRange buf s e)),
+                (fun buf s e -> StreamingParser.pushEventJson st (ByteJsonScanner.decodeByteRange buf s e)),
+                (fun buf key vs ve -> StreamingParser.pushTailJson st key (ByteJsonScanner.decodeByteRange buf vs ve))
             )
 
         Node.on fileStream "error" (fun err -> fail ("Failed to read file: " + Node.errorMessage err))
@@ -50,7 +50,7 @@ let load
         Node.on stream "data" (fun chunk ->
             if not finished then
                 try
-                    scanner.Push(Node.decodeChunk decoder chunk)
+                    scanner.Push(unbox<byte[]> chunk)
                 with ex ->
                     Node.destroyStream stream
                     fail ("Failed to parse: " + string ex))
@@ -58,8 +58,6 @@ let load
         Node.on stream "end" (fun _ ->
             if not finished then
                 try
-                    let tail = Node.decoderFlush decoder
-                    if tail <> "" then scanner.Push tail
                     scanner.Finish()
 
                     match StreamingParser.finish st scanner.IsComplete with

@@ -50,6 +50,11 @@ let private readMaxEvents () : int =
     let v = (workspace.getConfiguration "netlogViewer").get ("maxEvents", box 2000000)
     if Json.isNumber v then int (Json.toNumber v) else 2000000
 
+/// Reads the per-source detail-event cap (absent/non-number -> default).
+let private readMaxSourceDetailEvents () : int =
+    let v = (workspace.getConfiguration "netlogViewer").get ("maxSourceDetailEvents", box 50000)
+    if Json.isNumber v then int (Json.toNumber v) else 50000
+
 /// Fallback loader for non-local (virtual) documents: read the whole buffer at once,
 /// then hand the parsed log to `onLog`.
 let private loadViaBuffer (webview: Webview) (uri: Uri) (onLog: LogParser.LoadedLog -> unit) : unit =
@@ -91,12 +96,12 @@ let private handleMessage
             loadViaBuffer webview uri onLog
 
     | "getSourceEvents" ->
-        // On-demand details: return just the selected source's events.
+        // On-demand details: return just the selected source's events (capped).
         match logHolder.Value with
         | Some log ->
             let id = Json.tryNumber msg "id" |> Option.defaultValue -1.0 |> int
             match log.SourceIndex.TryGetValue id with
-            | true, se -> post (Wire.sourceEventsMessage id se.Entries)
+            | true, se -> post (Wire.sourceEventsMessage id se.Entries se.Entries.Count (readMaxSourceDetailEvents ()))
             | _ -> ()
         | None -> ()
 
@@ -122,6 +127,8 @@ let private resolve (context: ExtensionContext) (document: CustomDocument) (pane
     webview.html <- buildHtml webview nonce scriptUri styleUri
     let logHolder: LogParser.LoadedLog option ref = ref None
     webview.onDidReceiveMessage(handleMessage webview document logHolder) |> ignore
+    // Release the retained log (which can be large) when the editor is closed.
+    panel.onDidDispose(fun () -> logHolder.Value <- None) |> ignore
 
 let create (context: ExtensionContext) : CustomReadonlyEditorProvider =
     { new CustomReadonlyEditorProvider with

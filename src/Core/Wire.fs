@@ -3,16 +3,18 @@
 /// Uses plain objects/arrays only; raw `params`/`polledData`/`clientInfo` pass through.
 module Netlog.Core.Wire
 
+open System.Collections.Generic
 open Fable.Core
 open Fable.Core.JsInterop
 
 [<Emit("$0[$1] = $2")>]
 let private setProp (o: obj) (k: string) (v: obj) : unit = jsNative
 
-/// Map<int,string> -> { "id": "NAME" } plain object.
-let private intMapToObj (m: Map<int, string>) : obj =
+/// Dictionary<int,string> -> { "id": "NAME" } plain object.
+let private intMapToObj (m: Dictionary<int, string>) : obj =
     let o = Json.emptyObject ()
-    m |> Map.iter (fun k v -> setProp o (string k) (box v))
+    for kvp in m do
+        setProp o (string kvp.Key) (box kvp.Value)
     o
 
 let private eventDto (e: Model.Event) : obj =
@@ -24,6 +26,35 @@ let private eventDto (e: Model.Event) : obj =
         "sourceId" ==> e.SourceId
         "sourceType" ==> e.SourceType
         "params" ==> Option.toObj e.Params
+    ]
+
+/// Event TYPE names whose `params` the Timeline tab reads directly off the bulk
+/// events stream (Webview/Timeline.fs's NetworkTransferRateSeries reads `byte_count`,
+/// DiskCacheTransferRateSeries reads `bytes_copied`). Every other view either doesn't
+/// touch event params at all (it only uses `sources`/`polledData`) or fetches full
+/// params on demand per source via `sourceEventsMessage` -- so every other event's
+/// `params` can be dropped from the bulk stream. This matters because `params` blobs
+/// (URLs, headers, host names, ...) dominate the bulk payload size.
+let private timelineParamEventNames =
+    [| "SOCKET_BYTES_RECEIVED"; "UDP_BYTES_RECEIVED"
+       "SOCKET_BYTES_SENT"; "UDP_BYTES_SENT"
+       "ENTRY_READ_DATA"; "ENTRY_WRITE_DATA" |]
+
+let private timelineParamEventTypeIds (c: Constants.Constants) : Set<int> =
+    timelineParamEventNames |> Array.choose (fun name -> Map.tryFind name c.EventTypes) |> Set.ofArray
+
+/// Same shape as `eventDto`, but omits `params` for every event type except the
+/// handful Timeline needs -- used for the bulk `events`/`eventsChunk` stream only.
+/// `sourceEventsMessage` (on-demand per-source detail) always uses `eventDto` above.
+let private eventDtoBulk (keepParamsFor: Set<int>) (e: Model.Event) : obj =
+    createObj [
+        "index" ==> e.Index
+        "time" ==> e.Time
+        "type" ==> e.Type
+        "phase" ==> e.Phase
+        "sourceId" ==> e.SourceId
+        "sourceType" ==> e.SourceType
+        "params" ==> Option.toObj (if Set.contains e.Type keepParamsFor then e.Params else None)
     ]
 
 let private sourceDto (c: Constants.Constants) (now: float) (s: SourceGrouping.SourceEntry) : obj =
@@ -79,7 +110,8 @@ let private metaObj (msgType: string) (fileName: string) (log: LogParser.LoadedL
 /// fallback loader). Carries all events + sources inline.
 let build (fileName: string) (log: LogParser.LoadedLog) : obj =
     let o = metaObj "load" fileName log
-    setProp o "events" (log.Events |> Array.map eventDto)
+    let keepParamsFor = timelineParamEventTypeIds log.Constants
+    setProp o "events" (log.Events |> Array.map (eventDtoBulk keepParamsFor))
     setProp o "sources" (log.Sources |> Array.map (sourceDto log.Constants log.LastEventTicks))
     o
 
@@ -94,6 +126,7 @@ let private ChunkSize = 50000
 let postLoad (post: obj -> unit) (fileName: string) (log: LogParser.LoadedLog) : unit =
     let c = log.Constants
     let now = log.LastEventTicks
+    let keepParamsFor = timelineParamEventTypeIds c
     post (metaObj "loadStart" fileName log)
 
     let sources = log.Sources
@@ -108,7 +141,7 @@ let postLoad (post: obj -> unit) (fileName: string) (log: LogParser.LoadedLog) :
     let mutable k = 0
     while k < events.Length do
         let n = min ChunkSize (events.Length - k)
-        let slice = Array.sub events k n |> Array.map eventDto
+        let slice = Array.sub events k n |> Array.map (eventDtoBulk keepParamsFor)
         post (createObj [ "type" ==> "eventsChunk"; "events" ==> slice ])
         k <- k + n
 
@@ -116,10 +149,16 @@ let postLoad (post: obj -> unit) (fileName: string) (log: LogParser.LoadedLog) :
 
 /// Builds the on-demand response carrying a single source's events, requested by the
 /// Events view when a source is selected (so the webview never has to hold every
-/// event's params in memory just to render details).
-let sourceEventsMessage (id: int) (events: Model.Event seq) : obj =
+/// event's params in memory just to render details). At most `cap` events are sent;
+/// `total` is the source's full event count so the view can note any truncation.
+let sourceEventsMessage (id: int) (events: Model.Event seq) (total: int) (cap: int) : obj =
+    let taken =
+        if cap > 0 then events |> Seq.truncate cap |> Seq.map eventDto |> Seq.toArray
+        else events |> Seq.map eventDto |> Seq.toArray
     createObj [
         "type" ==> "sourceEvents"
         "id" ==> id
-        "events" ==> (events |> Seq.map eventDto |> Seq.toArray)
+        "events" ==> taken
+        "total" ==> total
+        "truncated" ==> (cap > 0 && total > cap)
     ]

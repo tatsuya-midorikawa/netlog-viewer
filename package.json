@@ -70,6 +70,12 @@
           "default": 2000000,
           "minimum": 0,
           "markdownDescription": "Maximum number of NetLog events to load from a single file. Larger files are streamed from disk and truncated at this many events (with a warning) so memory stays bounded. Set to `0` to load every event (may exhaust memory on very large logs)."
+        },
+        "netlogViewer.maxSourceDetailEvents": {
+          "type": "number",
+          "default": 50000,
+          "minimum": 100,
+          "markdownDescription": "Maximum number of events shown in the Events detail pane for a single selected source. Sources with more events are truncated (with a note) so selecting a very active source stays responsive."
         }
       }
     }
@@ -92,6 +98,7 @@
     "bundle:tests": "esbuild build/tests/Tests.js --bundle --platform=node --format=cjs --outfile=build/core-tests.cjs",
     "test": "npm run fable:tests && npm run bundle:tests && node build/core-tests.cjs",
     "watch:webview": "dotnet fable watch src/Webview --outDir build/webview",
+    "bench:big": "node scripts/verify-big-log.mjs",
     "clean": "dotnet fable clean src/Extension --outDir build/extension --yes && dotnet fable clean src/Webview --outDir build/webview --yes && dotnet fable clean tests/Core.Tests --outDir build/tests --yes",
     "package": "npm run build && vsce package --no-rewrite-relative-links --allow-missing-repository"
   },

@@ -124,9 +124,8 @@ let private onMessage (e: obj) : unit =
     | "loadEnd" -> onLoadEnd ()
     | "sourceEvents" ->
         let id = Json.tryNumber data "id" |> Option.defaultValue -1.0 |> int
-        let events = Json.get data "events"
         for (_, v) in views do
-            v.OnSourceEvents(id, events)
+            v.OnSourceEvents(id, data)
     | "load" -> onLoad data
     | "error" ->
         setFileName "Failed to load"

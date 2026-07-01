@@ -6,6 +6,12 @@
 /// a `--log-net-log` capture cut mid-event): incomplete trailing values are dropped
 /// and `IsComplete` reports whether the root object closed cleanly.
 ///
+/// NOTE: superseded by `ByteJsonScanner` (which scans raw bytes and avoids a
+/// whole-file UTF-16 decode pass) for the local-file streaming path in
+/// StreamLoader.fs. Kept, and still exercised by its own tests below, as a
+/// reference/fallback implementation and for differential testing against the
+/// byte-oriented scanner.
+///
 /// Pure (no Node/DOM), so it is unit-tested in Core. Only the individual constants
 /// object and each event object are ever buffered, so memory stays bounded.
 module Netlog.Core.JsonStreamScanner

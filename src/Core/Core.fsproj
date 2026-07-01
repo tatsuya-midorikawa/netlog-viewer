@@ -15,6 +15,7 @@
     <Compile Include="SourceGrouping.fs" />
     <Compile Include="LogParser.fs" />
     <Compile Include="JsonStreamScanner.fs" />
+    <Compile Include="ByteJsonScanner.fs" />
     <Compile Include="StreamingParser.fs" />
     <Compile Include="Wire.fs" />
     <Compile Include="Library.fs" />

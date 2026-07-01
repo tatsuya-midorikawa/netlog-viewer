@@ -78,8 +78,8 @@ let ingestEvent (st: IngestState) (ev: obj) : unit =
 
     let okSource = Json.isObject src
     let okTime = Json.isString timeRaw
-    let okType = match typeId with Some t -> Map.containsKey t constants.EventTypeNames | None -> false
-    let okSourceType = match srcTypeId with Some t -> Map.containsKey t constants.SourceTypeNames | None -> false
+    let okType = match typeId with Some t -> constants.EventTypeNames.ContainsKey t | None -> false
+    let okSourceType = match srcTypeId with Some t -> constants.SourceTypeNames.ContainsKey t | None -> false
     let okPhase = match phaseId with Some ph -> constants.ValidPhaseValues.Contains ph | None -> false
 
     if okSource && okTime && okType && okSourceType && okPhase then

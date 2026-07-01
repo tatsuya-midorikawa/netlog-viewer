@@ -2,15 +2,17 @@
 /// and net_constants.js. Decodes the loaded log's `constants` block into typed maps.
 module Netlog.Core.Constants
 
+open System.Collections.Generic
 open Netlog.Core
 
 type Constants =
     { Raw: obj
       EventTypes: Map<string, int>
-      EventTypeNames: Map<int, string>
+      // Dictionary, not Map: resolved per-event on the hot ingest/grouping path.
+      EventTypeNames: Dictionary<int, string>
       EventPhase: Map<string, int>
       SourceTypes: Map<string, int>
-      SourceTypeNames: Map<int, string>
+      SourceTypeNames: Dictionary<int, string>
       NetError: Map<string, int>
       LoadFlag: Map<string, int>
       LoadState: Map<string, int>
@@ -83,10 +85,14 @@ let decode (c: obj) : Constants =
 /// id -> name; "" when unknown (matches the original which would yield undefined,
 /// then defaults to "").
 let eventTypeName (c: Constants) (id: int) : string =
-    Map.tryFind id c.EventTypeNames |> Option.defaultValue ""
+    match c.EventTypeNames.TryGetValue id with
+    | true, v -> v
+    | _ -> ""
 
 let sourceTypeName (c: Constants) (id: int) : string =
-    Map.tryFind id c.SourceTypeNames |> Option.defaultValue ""
+    match c.SourceTypeNames.TryGetValue id with
+    | true, v -> v
+    | _ -> ""
 
 let netErrorId (c: Constants) (name: string) : int option = Map.tryFind name c.NetError
 

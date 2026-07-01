@@ -263,6 +263,96 @@ match runStreaming 0 5 truncatedDump with
     checkEq "truncated stream event count" 1 s.Events.Length
     check "truncated stream warning present" (s.LoadLog.Contains "truncated")
 
+// --- Byte-oriented scanner (ByteJsonScanner): parity with the string-based one ---
+// This is the scanner StreamLoader.fs actually uses for local files (bytes straight
+// off the fs stream, no whole-file UTF-16 decode pass first).
+printfn "ByteJsonScanner (byte-level streaming)"
+
+// Drives ByteJsonScanner + StreamingParser over `text`, split into `chunkSize`-BYTE
+// pieces (not characters) -- so, unlike the char-based `runStreaming` above, chunk
+// boundaries can fall in the middle of a multi-byte UTF-8 character.
+let runStreamingBytes (maxEvents: int) (chunkSize: int) (text: string) : Result<LogParser.LoadedLog, string> =
+    let st = StreamingParser.create maxEvents
+    let scanner =
+        Netlog.Core.ByteJsonScanner.Scanner(
+            (fun buf s e -> StreamingParser.pushConstantsJson st (ByteJsonScanner.decodeByteRange buf s e)),
+            (fun buf s e -> StreamingParser.pushEventJson st (ByteJsonScanner.decodeByteRange buf s e)),
+            (fun buf key vs ve -> StreamingParser.pushTailJson st key (ByteJsonScanner.decodeByteRange buf vs ve))
+        )
+    let bytes = ByteJsonScanner.encodeUtf8 text
+    let mutable i = 0
+    while i < bytes.Length do
+        let len = min chunkSize (bytes.Length - i)
+        scanner.Push(Array.sub bytes i len)
+        i <- i + len
+    scanner.Finish()
+    StreamingParser.finish st scanner.IsComplete
+
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "byte-scanner batch baseline loads" false
+| Ok batch ->
+    for chunkSize in [ 1; 3; 64; 760 ] do
+        match runStreamingBytes 0 chunkSize sampleText with
+        | Error e ->
+            check (sprintf "byte-streaming loads (chunk=%d)" chunkSize) false
+            eprintfn "%s" e
+        | Ok s ->
+            checkEq (sprintf "byte-streaming event count (chunk=%d)" chunkSize) batch.Events.Length s.Events.Length
+            checkEq (sprintf "byte-streaming source count (chunk=%d)" chunkSize) batch.Sources.Length s.Sources.Length
+            checkEq
+                (sprintf "byte-streaming description (chunk=%d)" chunkSize)
+                batch.Sources.[0].Description
+                s.Sources.[0].Description
+            checkEq (sprintf "byte-streaming numericDate (chunk=%d)" chunkSize) batch.NumericDate s.NumericDate
+            check (sprintf "byte-streaming clean load (chunk=%d)" chunkSize) (not (s.LoadLog.Contains "truncated"))
+
+match runStreamingBytes 0 1 streamingDump with
+| Error e ->
+    check "byte streamingDump loads" false
+    eprintfn "%s" e
+| Ok s ->
+    checkEq "byte streamingDump events" 2 s.Events.Length
+    checkEq "byte streamingDump sources" 1 s.Sources.Length
+    checkEq "byte streamingDump description" "https://a/" s.Sources.[0].Description
+    checkEq "byte streamingDump polledData.foo" 1.0 (wnum s.PolledData "foo")
+    checkEq "byte streamingDump userComments (unescaped)" (Some "hello, \"world\"") s.UserComments
+    check "byte streamingDump not truncated" (not (s.LoadLog.Contains "truncated"))
+
+match runStreamingBytes 1 5 streamingDump with
+| Error _ -> check "byte cap load" false
+| Ok s ->
+    checkEq "byte cap event count" 1 s.Events.Length
+    check "byte cap warning present" (s.LoadLog.Contains "maximum")
+
+match runStreamingBytes 0 5 truncatedDump with
+| Error _ -> check "byte truncated stream load" false
+| Ok s ->
+    checkEq "byte truncated stream event count" 1 s.Events.Length
+    check "byte truncated stream warning present" (s.LoadLog.Contains "truncated")
+
+// Multi-byte UTF-8 content fed one BYTE at a time (chunkSize=1): every possible
+// split point of every multi-byte character is exercised, proving the scanner
+// reassembles them correctly before decoding rather than corrupting/dropping bytes.
+let utf8Dump =
+    "{\"constants\":{\"logFormatVersion\":1,"
+    + "\"logEventTypes\":{\"REQUEST_ALIVE\":1},"
+    + "\"logEventPhase\":{\"PHASE_NONE\":0,\"PHASE_BEGIN\":1,\"PHASE_END\":2},"
+    + "\"logSourceType\":{\"NONE\":0,\"URL_REQUEST\":1},"
+    + "\"loadFlag\":{\"NORMAL\":0},\"netError\":{\"ERR_FAILED\":-2},"
+    + "\"addressFamily\":{\"UNSPEC\":0},\"timeTickOffset\":\"1700000000000\","
+    + "\"clientInfo\":{\"numericDate\":1700000000000}},\n"
+    + "\"events\":[\n"
+    + "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1000\",\"phase\":1,"
+    + "\"params\":{\"url\":\"https://例え.jp/日本語/café\"}}\n"
+    + "],\n"
+    + "\"polledData\":{}}\n"
+
+match runStreamingBytes 0 1 utf8Dump with
+| Error e ->
+    check "byte utf8Dump loads" false
+    eprintfn "%s" e
+| Ok s -> checkEq "byte utf8Dump description (multibyte, chunk=1)" "https://例え.jp/日本語/café" s.Sources.[0].Description
+
 // --- Wire.postLoad chunked protocol (loadStart -> chunks -> loadEnd) ---
 printfn "Wire.postLoad (chunked)"
 
@@ -296,12 +386,19 @@ match LogParser.loadLogFile sampleText with
 | Ok log ->
     match log.SourceIndex.TryGetValue 1 with
     | true, se ->
-        let msg = Wire.sourceEventsMessage 1 se.Entries
+        let msg = Wire.sourceEventsMessage 1 se.Entries se.Entries.Count 50000
         checkEq "sourceEvents type" "sourceEvents" (wstr msg "type")
         checkEq "sourceEvents id" 1 (int (wnum msg "id"))
         checkEq "sourceEvents event count" se.Entries.Count (Json.length (Json.get msg "events"))
+        checkEq "sourceEvents total" se.Entries.Count (int (wnum msg "total"))
+        check "sourceEvents not truncated" (not (Json.isTruthy (Json.get msg "truncated")))
         let ev0 = Json.item (Json.get msg "events") 0
         checkEq "sourceEvents ev0 sourceId" 1 (int (wnum ev0 "sourceId"))
+
+        let capped = Wire.sourceEventsMessage 1 se.Entries se.Entries.Count 2
+        checkEq "sourceEvents capped count" 2 (Json.length (Json.get capped "events"))
+        checkEq "sourceEvents capped total" se.Entries.Count (int (wnum capped "total"))
+        check "sourceEvents capped truncated" (Json.isTruthy (Json.get capped "truncated"))
     | _ -> check "source id 1 present" false
 
 printfn ""
