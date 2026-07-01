@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>webview bench harness</title>
+<link rel="stylesheet" href="/media/style.css" />
+<style>
+  #bench-result { position: fixed; top: 0; left: 0; background: #000; color: #0f0; font: 12px monospace; padding: 8px; z-index: 99999; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="bench-result">waiting...</div>
+<script>
+  // Minimal mock of the VS Code webview API that App.fs's `acquireVsCodeApi()`
+  // expects to exist globally -- only `postMessage` is exercised by this harness
+  // (the webview->host direction, e.g. the initial "ready" message and
+  // EventsView's getSourceEvents requests, which this benchmark does not trigger).
+  window.acquireVsCodeApi = function () {
+    return {
+      postMessage: function (_msg) {},
+      getState: function () { return undefined; },
+      setState: function (_s) {},
+    };
+  };
+
+  // Exposed for the Playwright driver: dispatches each pre-generated wire message
+  // as a real "message" DOM event (the same event type/shape `window.postMessage`
+  // delivery produces), synchronously in order, and times the whole run.
+  // `dispatchEvent` invokes listeners synchronously, so by the time the loop
+  // returns, App.fs's onMessage/onLoadEnd/onLoad (including every tab's
+  // OnLoadLogFinish) has fully finished for this batch of messages.
+  window.__runBench = async function () {
+    const res = await fetch("/messages");
+    const messages = await res.json();
+    const t0 = performance.now();
+    for (const msg of messages) {
+      window.dispatchEvent(new MessageEvent("message", { data: msg }));
+    }
+    const t1 = performance.now();
+    const result = { totalMs: t1 - t0, messageCount: messages.length };
+    window.__benchResult = result;
+    document.getElementById("bench-result").textContent = JSON.stringify(result, null, 2);
+    return result;
+  };
+</script>
+<script src="/dist/webview.js"></script>
+</body>
+</html>
