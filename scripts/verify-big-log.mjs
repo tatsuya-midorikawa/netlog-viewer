@@ -18,23 +18,31 @@
 //                 all runs are reported.
 //   --maxEvents=N 0 (default) = uncapped, matching the historical baseline.
 //
-// This measures three coarse stages rather than a fine per-function breakdown,
-// because in the current architecture decode/scan/JSON.parse/ingest/grouping all
-// happen interleaved inside the same per-chunk "data" callback:
-//   - cpuMs:  time actually spent inside the data callback (decode + scanner push,
+// This measures three coarse stages. Since StreamLoader.fs's `load` reads the
+// whole (decompressed) file into memory and scans it in one pass below its
+// ~1.5GB whole-buffer threshold (see StreamLoader.fs's WholeBufferThreshold),
+// falling back to true chunk-by-chunk streaming only above that, this harness
+// mirrors the SAME size-based dispatch so it measures whichever path production
+// actually takes for the given file -- see the tooling-lessons note in
+// /memories/tooling.md about hand-replicated harnesses silently going stale when
+// the production pipeline they mirror changes.
+//   - ioWaitMs: time to read (and, for `.gz`, decompress) the whole file into
+//             memory -- I/O-bound. (Only present in the streaming fallback path
+//             is a truer overlapped I/O-wait; below the threshold this is a
+//             synchronous, non-overlapped read, reported the same way for
+//             continuity with historical numbers.)
+//   - cpuMs:  time spent scanning + parsing (ByteJsonScanner + StreamingParser,
 //             which synchronously triggers JSON.parse + LogParser.ingestEvent +
 //             SourceGrouping) plus the end-of-stream finalize call. This is the
 //             CPU-bound portion.
-//   - ioWaitMs: wall-clock time of the ingest stage minus cpuMs -- an approximation
-//             of time spent waiting on disk/gunzip I/O and event-loop scheduling.
 //   - wireMs: time to build the wire messages (Core.Wire.postLoad), measured
 //             separately since it runs synchronously after ingest finishes.
 // For a finer flame-graph style breakdown, run with Node's built-in profiler:
 //   node --cpu-prof scripts/verify-big-log.mjs
 // and load the resulting .cpuprofile in a profiler view.
 
-import { existsSync, statSync, openSync, readSync, closeSync, createReadStream } from "node:fs";
-import { createGunzip } from "node:zlib";
+import { existsSync, statSync, openSync, readSync, closeSync, createReadStream, readFileSync } from "node:fs";
+import { createGunzip, gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -90,8 +98,69 @@ function median(values) {
 const fmtMs = (ms) => `${ms.toFixed(1)}ms`;
 const fmtMB = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 
-/** Runs the parse pipeline once end-to-end and resolves with timings + the loaded log. */
-function runOnce(absPath, maxEvents) {
+// Matches StreamLoader.fs's `WholeBufferThreshold` -- above this, production falls
+// back to true chunk-by-chunk streaming instead of reading the whole file at once.
+const WHOLE_BUFFER_THRESHOLD = 1610612736; // 1.5 GB
+
+function makeScanner(state) {
+  return newScanner(
+    (buf, s, e) => pushConstantsJson(state, decodeByteRange(buf, s, e)),
+    (buf, s, e) => pushEventJson(state, decodeByteRange(buf, s, e)),
+    (buf, key, vs, ve) => pushTailJson(state, key, decodeByteRange(buf, vs, ve))
+  );
+}
+
+function buildWireStats(absPath, log) {
+  const wireT0 = performance.now();
+  let chunkCount = 0;
+  let payloadBytes = 0;
+  postLoad(
+    (msg) => {
+      chunkCount += 1;
+      payloadBytes += Buffer.byteLength(JSON.stringify(msg));
+    },
+    path.basename(absPath),
+    log
+  );
+  return { wireMs: performance.now() - wireT0, chunkCount, payloadBytes };
+}
+
+/** Mirrors StreamLoader.fs's `loadWhole`: read (+decompress) the whole file, then
+ *  one Push+Finish call -- this is what production actually does below the
+ *  whole-buffer threshold, which covers ordinary "big" sample files. */
+function runWhole(absPath, gz, maxEvents) {
+  const t0 = performance.now();
+  const raw = readFileSync(absPath);
+  const buf = gz ? gunzipSync(raw) : raw;
+  const ioWaitMs = performance.now() - t0;
+
+  const cpuT0 = performance.now();
+  const state = createStreamState(maxEvents);
+  const scanner = makeScanner(state);
+  scannerPush(scanner, buf);
+  scannerFinish(scanner);
+  const result = finishStreamState(state, scannerIsComplete(scanner));
+  const cpuMs = performance.now() - cpuT0;
+
+  if (result.tag !== 0) throw new Error(String(result.fields[0]));
+  const log = result.fields[0];
+  const { wireMs, chunkCount, payloadBytes } = buildWireStats(absPath, log);
+  const ingestWallMs = ioWaitMs + cpuMs;
+  return {
+    cpuMs,
+    ioWaitMs,
+    ingestWallMs,
+    wireMs,
+    totalMs: ingestWallMs + wireMs,
+    log,
+    chunkCount,
+    payloadBytes,
+  };
+}
+
+/** Mirrors StreamLoader.fs's `loadStreaming` fallback (used above the whole-buffer
+ *  threshold): fs.createReadStream chunks, many smaller Push calls. */
+function runStreaming(absPath, gz, maxEvents) {
   return new Promise((resolve, reject) => {
     let finished = false;
     const fail = (err) => {
@@ -101,24 +170,13 @@ function runOnce(absPath, maxEvents) {
       }
     };
 
-    let gz = false;
-    try {
-      gz = isGzipFile(absPath);
-    } catch {
-      gz = absPath.endsWith(".gz");
-    }
-
     const t0 = performance.now();
     let cpuMs = 0;
 
     const fileStream = createReadStream(absPath);
     const stream = gz ? fileStream.pipe(createGunzip()) : fileStream;
     const state = createStreamState(maxEvents);
-    const scanner = newScanner(
-      (buf, s, e) => pushConstantsJson(state, decodeByteRange(buf, s, e)),
-      (buf, s, e) => pushEventJson(state, decodeByteRange(buf, s, e)),
-      (buf, key, vs, ve) => pushTailJson(state, key, decodeByteRange(buf, vs, ve))
-    );
+    const scanner = makeScanner(state);
 
     fileStream.on("error", fail);
     if (gz) stream.on("error", fail);
@@ -141,7 +199,6 @@ function runOnce(absPath, maxEvents) {
       const cbT0 = performance.now();
       try {
         scannerFinish(scanner);
-
         const result = finishStreamState(state, scannerIsComplete(scanner));
         cpuMs += performance.now() - cbT0;
         const ingestWallMs = performance.now() - t0;
@@ -151,21 +208,7 @@ function runOnce(absPath, maxEvents) {
           return;
         }
         const log = result.fields[0];
-
-        // Wire build: mirrors NetlogEditor's postLoad chunking. There is no real
-        // webview here, so `post` just accounts for message count + serialized bytes.
-        const wireT0 = performance.now();
-        let chunkCount = 0;
-        let payloadBytes = 0;
-        postLoad(
-          (msg) => {
-            chunkCount += 1;
-            payloadBytes += Buffer.byteLength(JSON.stringify(msg));
-          },
-          path.basename(absPath),
-          log
-        );
-        const wireMs = performance.now() - wireT0;
+        const { wireMs, chunkCount, payloadBytes } = buildWireStats(absPath, log);
 
         finished = true;
         resolve({
@@ -183,6 +226,26 @@ function runOnce(absPath, maxEvents) {
       }
     });
   });
+}
+
+/** Runs the parse pipeline once end-to-end, dispatching by size exactly like
+ *  StreamLoader.fs's `load`, and resolves with timings + the loaded log. */
+async function runOnce(absPath, maxEvents) {
+  let gz = false;
+  try {
+    gz = isGzipFile(absPath);
+  } catch {
+    gz = absPath.endsWith(".gz");
+  }
+
+  let size;
+  try {
+    size = statSync(absPath).size;
+  } catch {
+    size = WHOLE_BUFFER_THRESHOLD;
+  }
+
+  return size < WHOLE_BUFFER_THRESHOLD ? runWhole(absPath, gz, maxEvents) : runStreaming(absPath, gz, maxEvents);
 }
 
 function summarize(log) {

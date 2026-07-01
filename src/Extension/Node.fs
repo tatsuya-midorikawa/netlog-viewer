@@ -15,6 +15,14 @@ let isGzip (bytes: obj) : bool = jsNative
 [<Emit("require('zlib').gunzipSync($0)")>]
 let gunzipSync (bytes: obj) : obj = jsNative
 
+/// Synchronously reads a whole file into memory as a Buffer (treated as byte[]).
+/// Node Buffers can hold up to ~2GB, well past the ~512MB *string* limit that
+/// forces streaming elsewhere in this codebase -- used for the whole-buffer fast
+/// path (see StreamLoader.fs), guarded by a size threshold so pathologically large
+/// files still go through the incremental streaming path.
+[<Emit("require('fs').readFileSync($0)")>]
+let readFileSyncBytes (path: string) : byte[] = jsNative
+
 // --- Streaming primitives (for loading files too large to hold as one string) ---
 
 /// Peeks the first two bytes of a file to detect the gzip magic number, without

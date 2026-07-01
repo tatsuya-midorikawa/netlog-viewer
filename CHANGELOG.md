@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Loading large NetLog files is significantly faster: the streaming loader now scans raw bytes directly instead of decoding the whole file to text up front, and the initial event stream sent to the viewer now omits parameter data that only the Events tab's on-demand detail view needs.
+- Loading is faster still for files under ~1.5 GB (most real-world logs): they are now read into memory and scanned in a single pass instead of many smaller chunks, avoiding repeated buffer-copy overhead. Larger files still stream incrementally as before, so memory use stays bounded.
 - The batch and streaming loaders now share a single per-event validation/grouping path, so both produce identical results.
 - The parsed log is delivered to the viewer as a sequence of chunks (`loadStart` → source/event chunks → `loadEnd`) instead of one large message, avoiding a single oversized transfer for big logs.
 - The Events tab now loads a source's event details on demand (when it is selected) instead of keeping every event in the viewer, keeping memory low for large logs.
