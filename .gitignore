@@ -558,3 +558,4 @@ vite.config.ts.timestamp-*
 *.xlsx
 *.docs
 *.pptx
+.samples
