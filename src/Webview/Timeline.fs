@@ -45,11 +45,24 @@ let private paramNum (e: Model.Event) (key: string) : float option =
     | Some p -> Json.tryNumber p key
     | None -> None
 
+/// Formats one sampled value for the status/hover line, matching the units
+/// GraphView.Graph's y-axis labels already use (plain count vs B/s -> kB/s -> MB/s).
+let private formatValue (dataType: DataType) (v: float) : string =
+    match dataType with
+    | SourceCount -> toFixed v 0
+    | BytesPerSecond ->
+        if v >= 1048576.0 then toFixed (v / 1048576.0) 1 + " MB/s"
+        elif v >= 1024.0 then toFixed (v / 1024.0) 1 + " kB/s"
+        else toFixed v 0 + " B/s"
+
 [<AbstractClass>]
 type DataSeries(dataType: DataType) =
     let points = ResizeArray<DataPoint>()
     member val Color = "red" with get, set
     member val IsVisible = true with get, set
+    // The legend label (set once, in View.OnLoadLogFinish's `add` helper below), used
+    // by GraphView.DescribeValuesAt to label the hover/status line.
+    member val Name = "" with get, set
     member _.DataType = dataType
     member _.Points = points
 
@@ -153,6 +166,16 @@ type private Graph(dataType: DataType, alignRight: bool) =
     let mutable labels: string[] = [||]
 
     member _.AddSeries(s: DataSeries) = series.Add s
+
+    /// A single sampled value per visible series near `time`, for the hover/status
+    /// line (GraphView.DescribeValuesAt) -- reuses each series' own GetValues with a
+    /// 1-sample window instead of a whole-canvas-width array.
+    member _.ValuesAt(time: float, stepSize: float) : (DataSeries * float) list =
+        [ for s in series do
+              if s.IsVisible then
+                  let vs = s.GetValues(time, stepSize, 1)
+                  if vs.Length > 0 then
+                      yield (s, vs.[0]) ]
 
     member private _.GetValues(s: DataSeries) : float[] option =
         if s.IsVisible then Some(s.GetValues(startTime, scale, int width)) else None
@@ -289,6 +312,13 @@ type private GraphView() =
         scale <- DEFAULT_SCALE
         position <- range
 
+    /// Restores the default zoom level and scrolls to the right edge, without
+    /// touching the loaded date range -- used by the "Reset zoom" button/Home key.
+    member this.ResetZoom() =
+        scale <- DEFAULT_SCALE
+        this.UpdateRange canvasWidth
+        position <- range
+
     member _.SetDataSeries(dataSeries: DataSeries list) =
         let bytes = Graph(BytesPerSecond, true)
         let count = Graph(SourceCount, false)
@@ -351,6 +381,37 @@ type private GraphView() =
                     ctx.stroke ()
                     time <- time + timeStep
 
+    /// The wall-clock time at screen x=0, shared by Repaint (drawing) and the
+    /// status/hover text below so they can never disagree with what's on screen.
+    member private this.VisibleStartTime(width: float) =
+        let pos = if range = 0.0 then this.GetLength() - width else position
+        startTime + pos * scale
+
+    member private _.DescribeScale() : string =
+        if scale >= 1000.0 then toFixed (scale / 1000.0) 1 + " s/px" else toFixed scale 0 + " ms/px"
+
+    /// The always-visible "what am I looking at" line (visible time range + current
+    /// zoom level) -- addresses the "can't tell the current zoom/time range" gap.
+    member this.DescribeView() : string =
+        let visibleStart = this.VisibleStartTime(canvasWidth)
+        let visibleEnd = visibleStart + scale * canvasWidth
+        localeTime visibleStart + " \u2013 " + localeTime visibleEnd + " (" + this.DescribeScale() + ")"
+
+    /// Same as DescribeView, but for a specific screen x (hover position): appends
+    /// each visible series' sampled value near that time, e.g. for a status-line
+    /// tooltip that doesn't need any floating/positioned DOM element.
+    member this.DescribeValuesAt(screenX: float) : string =
+        let time = this.VisibleStartTime(canvasWidth) + screenX * scale
+        let values = graphs |> List.collect (fun g -> g.ValuesAt(time, scale))
+        if List.isEmpty values then
+            this.DescribeView()
+        else
+            let parts =
+                values
+                |> List.filter (fun (s, _) -> s.Name <> "")
+                |> List.map (fun (s, v) -> s.Name + ": " + formatValue s.DataType v)
+            localeTime time + " \u2014 " + String.concat ", " parts
+
     member this.Repaint(canvas: Canvas) =
         let width = float canvas.width
         let mutable height = float canvas.height
@@ -365,8 +426,7 @@ type private GraphView() =
             ctx.save ()
             ctx.translate (0.5, 0.5)
 
-            let pos = if range = 0.0 then this.GetLength() - width else position
-            let visibleStartTime = startTime + pos * scale
+            let visibleStartTime = this.VisibleStartTime(width)
 
             let textHeight = height
             height <- height - (fontHeight + LABEL_VERTICAL_SPACING)
@@ -403,6 +463,7 @@ type View(root: Element) as this =
     let mutable graphDiv = Unchecked.defaultof<Element>
     let mutable canvasEl = Unchecked.defaultof<Element>
     let mutable legendUl = Unchecked.defaultof<Element>
+    let mutable statusEl = Unchecked.defaultof<Element>
     let mutable isDragging = false
     let mutable dragX = 0.0
 
@@ -414,27 +475,56 @@ type View(root: Element) as this =
         clear root
         legendUl <- addNode root "ul"
         legendUl.className <- "nv-timeline-legend"
+
+        let toolbar = addNode root "div"
+        toolbar.className <- "nv-timeline-toolbar"
+        let resetBtn = addNode toolbar "button"
+        resetBtn.setAttribute ("type", "button")
+        resetBtn.className <- "nv-report-toggle"
+        resetBtn.textContent <- "Reset zoom"
+        resetBtn.addEventListener (
+            "click",
+            fun e ->
+                preventDefault e
+                graph.ResetZoom()
+                this.Repaint())
+        let status = addNode toolbar "span"
+        status.className <- "nv-timeline-status"
+        statusEl <- status
+
         graphDiv <- addNode root "div"
         graphDiv.className <- "nv-timeline-graph"
         canvasEl <- addNode graphDiv "canvas"
+        canvasEl.tabIndex <- 0
+        canvasEl.setAttribute ("role", "img")
+        canvasEl.setAttribute (
+            "aria-label",
+            "Network activity timeline. Arrow keys pan, plus and minus zoom, Home resets. Hover for values.")
         canvasEl.addEventListener ("wheel", this.OnWheel)
         canvasEl.addEventListener ("mousedown", this.OnMouseDown)
         canvasEl.addEventListener ("mousemove", this.OnMouseMove)
         canvasEl.addEventListener ("mouseup", (fun _ -> isDragging <- false))
-        canvasEl.addEventListener ("mouseout", (fun _ -> isDragging <- false))
+        canvasEl.addEventListener ("mouseout", (fun _ -> isDragging <- false; this.Repaint()))
+        canvasEl.addEventListener ("keydown", this.OnKeyDown)
+
+    /// Repaints the canvas and refreshes the always-visible time-range/scale status
+    /// line, so the two can never show stale/inconsistent info relative to each other.
+    member private this.Repaint() =
+        graph.Repaint this.Canvas
+        statusEl.textContent <- graph.DescribeView()
 
     member private this.ResizeAndRepaint() =
         let c = this.Canvas
         c.width <- max 10 graphDiv.clientWidth
         c.height <- max 10 graphDiv.clientHeight
         graph.Resize(float c.width)
-        graph.Repaint c
+        this.Repaint()
 
     member private this.OnWheel(e: obj) =
         preventDefault e
         graph.HorizontalScroll(Json.toNumber (Json.get e "deltaX"))
         graph.Zoom(ZOOM_RATE ** (Json.toNumber (Json.get e "deltaY") / 120.0))
-        graph.Repaint this.Canvas
+        this.Repaint()
 
     member private this.OnMouseDown(e: obj) =
         preventDefault e
@@ -447,7 +537,37 @@ type View(root: Element) as this =
             let cx = Json.toNumber (Json.get e "clientX")
             graph.HorizontalScroll(DRAG_RATE * (cx - dragX))
             dragX <- cx
-            graph.Repaint this.Canvas
+            this.Repaint()
+        else
+            statusEl.textContent <- graph.DescribeValuesAt(eventOffsetX e)
+
+    /// Keyboard alternative to wheel-zoom/drag-pan (the canvas is a plain <canvas>,
+    /// mouse-only otherwise -- a real accessibility gap for trackpad-less/assistive
+    /// tech users).
+    member private this.OnKeyDown(e: obj) =
+        match eventKey e with
+        | "ArrowLeft" ->
+            preventDefault e
+            graph.HorizontalScroll(-50.0)
+            this.Repaint()
+        | "ArrowRight" ->
+            preventDefault e
+            graph.HorizontalScroll 50.0
+            this.Repaint()
+        | "+"
+        | "=" ->
+            preventDefault e
+            graph.Zoom(1.0 / ZOOM_RATE)
+            this.Repaint()
+        | "-" ->
+            preventDefault e
+            graph.Zoom ZOOM_RATE
+            this.Repaint()
+        | "Home" ->
+            preventDefault e
+            graph.ResetZoom()
+            this.Repaint()
+        | _ -> ()
 
     override this.Show(visible: bool) =
         base.Show(visible)
@@ -466,18 +586,20 @@ type View(root: Element) as this =
         let add (color: string) (label: string) (s: DataSeries) =
             s.Color <- color
             s.IsVisible <- true
+            s.Name <- label
             series.Add s
             let li = addNode legendUl "li"
-            let cb = addNode li "input"
+            let lbl = addNode li "label"
+            let cb = addNode lbl "input"
             cb.setAttribute ("type", "checkbox")
             setChecked cb true
-            let swatch = addNode li "span"
+            let swatch = addNode lbl "span"
             swatch.className <- "nv-timeline-swatch"
             swatch.setAttribute ("style", "background:" + color)
-            addText li (" " + label)
+            addText lbl (" " + label)
             cb.addEventListener ("change", (fun _ ->
                 s.IsVisible <- getChecked cb
-                graph.Repaint this.Canvas))
+                this.Repaint()))
 
         add "#4e79a7" "Open sockets" (SourceCountSeries(srcId "SOCKET", evId "SOCKET_ALIVE", pb, pe))
         add "#59a14f" "In-use sockets" (SocketsInUseSeries(srcId "SOCKET", evId "SOCKET_IN_USE", evId "SSL_CONNECT", pb, pe))

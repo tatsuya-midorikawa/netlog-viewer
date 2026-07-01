@@ -1,0 +1,18 @@
+{
+  "constants": {
+    "logFormatVersion": 1,
+    "logEventTypes": { "REQUEST_ALIVE": 1, "URL_REQUEST_START_JOB": 2 },
+    "logEventPhase": { "PHASE_NONE": 0, "PHASE_BEGIN": 1, "PHASE_END": 2 },
+    "logSourceType": { "NONE": 0, "URL_REQUEST": 1 },
+    "loadFlag": { "NORMAL": 0 },
+    "netError": { "ERR_FAILED": -2 },
+    "addressFamily": { "UNSPEC": 0 },
+    "timeTickOffset": "1700000000000",
+    "clientInfo": { "numericDate": 1700000000000 }
+  },
+  "events": [
+    { "source": { "type": 1, "id": 1 }, "type": 1, "time": "1000", "phase": 1, "params": { "url": "https://example.com/" } },
+    { "source": { "type": 1, "id": 1 }, "type": 2, "time": "1040", "phase": 0 },
+    { "source": { "type": 1, "id": 1 }, "type": 1, "time": "1080", "phase": 2 }
+  ]
+}

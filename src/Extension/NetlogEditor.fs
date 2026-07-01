@@ -108,6 +108,14 @@ let private handleMessage
             | _ -> ()
         | None -> ()
 
+    | "copyToClipboard" ->
+        // Routed through the extension host rather than the webview calling
+        // navigator.clipboard directly, since clipboard write access from inside a
+        // VS Code webview's sandboxed context is not reliable across platforms.
+        match Json.tryString msg "text" with
+        | Some text when text <> "" -> env.clipboard.writeText text |> ignore
+        | _ -> ()
+
     | _ -> ()
 
 let private resolve (context: ExtensionContext) (document: CustomDocument) (panel: WebviewPanel) : unit =

@@ -173,12 +173,19 @@ type TablePrinter() =
         flush ()
         pre
 
-    member this.ToHtml(parent: Element, style: string) : Element =
+    /// Shared by ToHtml/ToInteractiveHtml: builds the <table>, plus (for the latter)
+    /// the header <th> cells and each body row's node + cell texts, so sorting/
+    /// filtering can be wired up without re-parsing the DOM afterwards.
+    member private this.BuildHtml
+        (parent: Element, style: string)
+        : Element * Element * ResizeArray<Element> * ResizeArray<Element * string[]> =
         let numColumns = this.NumColumns
         let table = addNode parent "table"
         table.setAttribute ("class", style)
         let thead = addNode table "thead"
         let tbody = addNode table "tbody"
+        let headerCells = ResizeArray<Element>()
+        let bodyRows = ResizeArray<Element * string[]>()
 
         match title with
         | Some t ->
@@ -192,6 +199,7 @@ type TablePrinter() =
             let isHeader = (r = 0 && hasHeaderRow)
             let rowNode = addNode (if isHeader then thead else tbody) "tr"
             let cellType = if isHeader then "th" else "td"
+            let texts = ResizeArray<string>()
             for c in 0 .. numColumns - 1 do
                 match this.GetCell(r, c) with
                 | Some cell ->
@@ -203,5 +211,75 @@ type TablePrinter() =
                         let a = addNodeWithText tableCell "a" cell.Text
                         a.href <- link
                     | None -> addText tableCell cell.Text
-                | None -> ()
+                    texts.Add cell.Text
+                    if isHeader then headerCells.Add tableCell
+                | None -> texts.Add ""
+            if not isHeader then bodyRows.Add(rowNode, texts.ToArray())
+
+        table, tbody, headerCells, bodyRows
+
+    member this.ToHtml(parent: Element, style: string) : Element =
+        let table, _, _, _ = this.BuildHtml(parent, style)
         table
+
+    /// Same table as ToHtml, plus a free-text row filter and click-to-sort column
+    /// headers (both pure client-side DOM manipulation -- no new wire messages).
+    member this.ToInteractiveHtml(parent: Element, style: string) : Element =
+        let wrapper = addNode parent "div"
+        wrapper.className <- "nv-interactive-table"
+
+        let searchInput = addNode wrapper "input"
+        searchInput.setAttribute ("type", "text")
+        searchInput.className <- "nv-filter-input"
+        searchInput.setAttribute ("placeholder", "Filter rows\u2026")
+        searchInput.setAttribute ("aria-label", "Filter table rows")
+
+        let _, tbody, headerCells, bodyRows = this.BuildHtml(wrapper, style)
+
+        searchInput.addEventListener (
+            "input",
+            fun _ ->
+                let q = searchInput.value.ToLower()
+                for (row, texts) in bodyRows do
+                    let matches = q = "" || texts |> Array.exists (fun t -> t.ToLower().Contains q)
+                    setNodeDisplay row matches)
+
+        let mutable sortColumn = -1
+        let mutable sortDescending = false
+
+        for i in 0 .. headerCells.Count - 1 do
+            let th = headerCells.[i]
+            th.classList.add "nv-sortable-th"
+            th.setAttribute ("role", "button")
+            th.setAttribute ("aria-sort", "none")
+            th.tabIndex <- 0
+
+            let activate () =
+                sortDescending <- (sortColumn = i && not sortDescending)
+                sortColumn <- i
+                for j in 0 .. headerCells.Count - 1 do
+                    headerCells.[j].setAttribute (
+                        "aria-sort",
+                        (if j <> i then "none"
+                         elif sortDescending then "descending"
+                         else "ascending")
+                    )
+                let key (texts: string[]) = if i < texts.Length then texts.[i].ToLower() else ""
+                let sorted = bodyRows |> Seq.sortBy (fun (_, t) -> key t) |> Seq.toList
+                let ordered = if sortDescending then List.rev sorted else sorted
+                for (row, _) in ordered do
+                    tbody.appendChild row |> ignore
+
+            th.addEventListener ("click", (fun _ -> activate ()))
+            th.addEventListener (
+                "keydown",
+                fun e ->
+                    match eventKey e with
+                    | "Enter"
+                    | " " ->
+                        preventDefault e
+                        activate ()
+                    | _ -> ())
+
+        wrapper
+

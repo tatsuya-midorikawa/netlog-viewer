@@ -32,11 +32,33 @@ let private toEvent (w: obj) : Model.Event =
 let private MaxRenderedRows = 2000
 
 type private SourceVm =
-    { Id: int; TypeName: string; Description: string; IsError: bool; IsActive: bool; StartTicks: float; Duration: float; mutable Selected: bool }
+    { Id: int
+      TypeName: string
+      Description: string
+      IsError: bool
+      IsActive: bool
+      StartTicks: float
+      Duration: float
+      mutable Selected: bool }
 
 type private RenderedRow = { Vm: SourceVm; Row: Element; Checkbox: Element }
 
-type EventsView(root: Element, post: obj -> unit) as this =
+/// True for any token that sets the sort directive (`sort:x` / `-sort:x`). Used by
+/// `withSortToken` below so a column-header click can find-and-replace the active
+/// sort token while leaving the rest of the filter text untouched -- sort state
+/// lives entirely in the filter text; header-click is just a convenience for it.
+let private isSortToken (token: string) : bool =
+    let low = token.ToLower()
+    low.StartsWith "sort:" || low.StartsWith "-sort:"
+
+/// Replaces any existing sort:/-sort: token in `filterText` with one for `method`
+/// (prefixed with `-` when `backwards`), preserving every other token as-is.
+let private withSortToken (filterText: string) (method: string) (backwards: bool) : string =
+    let kept = filterText.Split(' ') |> Array.filter (fun t -> t.Length > 0 && not (isSortToken t))
+    let token = (if backwards then "-" else "") + "sort:" + method
+    String.concat " " (Array.append kept [| token |])
+
+type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> unit) as this =
     inherit ViewBase(root)
 
     let mutable filterInput = Unchecked.defaultof<Element>
@@ -53,9 +75,14 @@ type EventsView(root: Element, post: obj -> unit) as this =
     let fetched = System.Collections.Generic.Dictionary<int, Model.Event[]>()
     // sourceId -> the source's full event count (so details can note any truncation).
     let sourceTotal = System.Collections.Generic.Dictionary<int, int>()
+    let sourceById = System.Collections.Generic.Dictionary<int, SourceVm>()
     // A source-dependency link may target a source whose events aren't loaded yet;
     // remember it and scroll once its events arrive.
     let mutable pendingScrollId: int option = None
+    let mutable errorChipButton = Unchecked.defaultof<Element>
+    let mutable idTh = Unchecked.defaultof<Element>
+    let mutable typeTh = Unchecked.defaultof<Element>
+    let mutable descTh = Unchecked.defaultof<Element>
 
     do this.BuildLayout()
 
@@ -70,7 +97,33 @@ type EventsView(root: Element, post: obj -> unit) as this =
         input.setAttribute ("type", "text")
         input.className <- "nv-filter-input"
         input.setAttribute ("placeholder", "type:url_request   is:error   sort:duration")
+        input.setAttribute ("aria-label", "Filter sources")
         filterInput <- input
+
+        let helpButton = addNode filterBar "button"
+        helpButton.setAttribute ("type", "button")
+        helpButton.className <- "nv-icon-button"
+        helpButton.setAttribute ("aria-label", "Filter syntax help")
+        helpButton.textContent <- "?"
+
+        let helpPopover = addNode filterBar "div"
+        helpPopover.className <- "nv-popover"
+        helpPopover.style.display <- "none"
+        helpPopover.setAttribute ("role", "note")
+        this.BuildFilterHelp helpPopover
+
+        helpButton.addEventListener (
+            "click",
+            fun e ->
+                preventDefault e
+                setNodeDisplay helpPopover (helpPopover.style.display = "none"))
+
+        let errorChip = addNode filterBar "button"
+        errorChip.setAttribute ("type", "button")
+        errorChip.className <- "nv-error-chip"
+        errorChip.style.display <- "none"
+        errorChip.addEventListener ("click", (fun e -> preventDefault e; this.ToggleErrorFilter()))
+        errorChipButton <- errorChip
 
         let note = addNode root "div"
         note.className <- "nv-source-count"
@@ -84,9 +137,9 @@ type EventsView(root: Element, post: obj -> unit) as this =
         let thead = addNode table "thead"
         let htr = addNode thead "tr"
         addNodeWithText htr "th" "" |> ignore
-        addNodeWithText htr "th" "ID" |> ignore
-        addNodeWithText htr "th" "Type" |> ignore
-        addNodeWithText htr "th" "Description" |> ignore
+        idTh <- this.BuildSortableHeader (htr, "ID", "id")
+        typeTh <- this.BuildSortableHeader (htr, "Type", "type")
+        descTh <- this.BuildSortableHeader (htr, "Description", "desc")
         tableBody <- addNode table "tbody"
 
         let right = split.RightPane
@@ -94,6 +147,87 @@ type EventsView(root: Element, post: obj -> unit) as this =
         right.addEventListener ("click", this.OnDetailsClick)
 
         input.addEventListener ("input", (fun _ -> this.ApplyFilter()))
+
+    /// Renders the full SourceFilterParser syntax (kept in one place so the popover
+    /// can't silently drift from the parser) into the filter-help popover.
+    member private _.BuildFilterHelp(root: Element) =
+        addNodeWithText root "div" "Filter syntax" |> ignore
+        let ul = addNode root "ul"
+        for line in
+            [ "type:name1,name2 - source type contains name1 or name2"
+              "id:1,2 - exact source id"
+              "is:active / is:error - state filters"
+              "sort:time|id|active|desc|duration|type - sort (also via column headers)"
+              "-token - negate any directive or word above"
+              "\"quoted text\" - match a phrase containing spaces"
+              "plain text - substring match on id, type, and description" ] do
+            addNodeWithText ul "li" line |> ignore
+
+    /// A clickable, keyboard-operable <th> that rewrites the sort: token in the
+    /// filter text (see withSortToken) instead of tracking separate sort state.
+    member private this.BuildSortableHeader(row: Element, label: string, method: string) : Element =
+        let th = addNodeWithText row "th" label
+        th.className <- "nv-sortable-th"
+        th.setAttribute ("role", "button")
+        th.setAttribute ("aria-sort", "none")
+        th.tabIndex <- 0
+        let activate () = this.OnHeaderSortClick method
+        th.addEventListener ("click", (fun _ -> activate ()))
+        th.addEventListener (
+            "keydown",
+            fun e ->
+                match eventKey e with
+                | "Enter"
+                | " " ->
+                    preventDefault e
+                    activate ()
+                | _ -> ())
+        th
+
+    member private this.OnHeaderSortClick(method: string) =
+        let parsed = parse filterInput.value
+        let backwards =
+            match parsed.Sort with
+            | Some(m, b) when m = method -> not b
+            | _ -> false
+        filterInput.value <- withSortToken filterInput.value method backwards
+        this.ApplyFilter()
+
+    /// Toggles `is:error` in the filter text (the error-count chip's quick filter).
+    member private this.ToggleErrorFilter() =
+        let tokens = filterInput.value.Split(' ') |> Array.filter (fun t -> t.Length > 0)
+        let hasErrorToken = tokens |> Array.exists (fun t -> t.ToLower() = "is:error")
+        filterInput.value <-
+            if hasErrorToken then
+                tokens |> Array.filter (fun t -> t.ToLower() <> "is:error") |> String.concat " "
+            else
+                String.concat " " (Array.append tokens [| "is:error" |])
+        this.ApplyFilter()
+
+    /// Always-visible error count over ALL sources (not just the current filter
+    /// match), so a user can tell errors exist somewhere even while filtered to
+    /// something else. Clicking it toggles the is:error quick filter.
+    member private _.UpdateErrorChip() =
+        let errorCount = sources |> Seq.filter (fun s -> s.IsError) |> Seq.length
+        if errorCount > 0 then
+            let isActive = filterInput.value.Split(' ') |> Array.exists (fun t -> t.ToLower() = "is:error")
+            errorChipButton.textContent <- sprintf "\u26A0 %d error%s" errorCount (if errorCount = 1 then "" else "s")
+            if isActive then errorChipButton.classList.add "active" else errorChipButton.classList.remove "active"
+            setNodeDisplay errorChipButton true
+        else
+            setNodeDisplay errorChipButton false
+
+    /// Reflects the parsed sort directive as `aria-sort` on the matching column
+    /// header (and a CSS-drawn arrow via [aria-sort] in style.css).
+    member private _.UpdateSortIndicators(sort: (string * bool) option) =
+        let apply (th: Element) (method: string) =
+            match sort with
+            | Some(m, backwards) when m = method ->
+                th.setAttribute ("aria-sort", (if backwards then "descending" else "ascending"))
+            | _ -> th.setAttribute ("aria-sort", "none")
+        apply idTh "id"
+        apply typeTh "type"
+        apply descTh "desc"
 
     member private this.OnSelectionChanged() =
         // Request events for any selected source we haven't fetched yet; render what is
@@ -104,17 +238,17 @@ type EventsView(root: Element, post: obj -> unit) as this =
         this.RenderDetails()
 
     member private _.RenderDetails() =
-        let detailSources =
+        let entries =
             sources
             |> Seq.filter (fun s -> s.Selected)
-            |> Seq.choose (fun s ->
+            |> Seq.map (fun s ->
                 match fetched.TryGetValue s.Id with
                 | true, evs ->
                     let total =
                         match sourceTotal.TryGetValue s.Id with
                         | true, t -> t
                         | _ -> evs.Length
-                    Some
+                    DetailsView.Ready
                         { DetailSource.Id = s.Id
                           TypeName = s.TypeName
                           Description = s.Description
@@ -122,9 +256,9 @@ type EventsView(root: Element, post: obj -> unit) as this =
                           Events = evs
                           Total = total
                           Truncated = total > evs.Length }
-                | _ -> None)
+                | _ -> DetailsView.Loading(s.Id, s.TypeName, s.Description))
             |> Seq.toList
-        details.SetData(constants, baseTime, logCreationTime, detailSources)
+        details.SetData(constants, baseTime, logCreationTime, entries)
         match pendingScrollId with
         | Some id when fetched.ContainsKey id ->
             details.ScrollToSourceId id
@@ -171,6 +305,7 @@ type EventsView(root: Element, post: obj -> unit) as this =
         this.OnSelectionChanged()
 
     member private this.RenderRow(vm: SourceVm) =
+        let rowIndex = rendered.Count
         let tr = addNode tableBody "tr"
         let selTd = addNode tr "td"
         let checkbox = addNode selTd "input"
@@ -180,7 +315,13 @@ type EventsView(root: Element, post: obj -> unit) as this =
         let idTd = addNode tr "td"
         addText idTd (string vm.Id)
         let typeTd = addNode tr "td"
-        addText typeTd vm.TypeName
+        // Non-color state cues (error/inactive) are real visible text, not just a CSS
+        // color, so they read the same for colorblind users and screen readers.
+        let statusPrefix =
+            if vm.IsError then "\u26A0 "
+            elif not vm.IsActive then "\u25CB "
+            else ""
+        addText typeTd (statusPrefix + vm.TypeName)
         let descTd = addNode tr "td"
         addText descTd vm.Description
 
@@ -189,12 +330,45 @@ type EventsView(root: Element, post: obj -> unit) as this =
         elif not vm.IsActive then tr.classList.add "inactive"
         if vm.Selected then tr.classList.add "selected"
 
+        // Roving tabIndex across rendered rows: only one row is ever a Tab-stop;
+        // Arrow/Home/End move it (FocusRow below), matching the tablist pattern.
+        tr.tabIndex <- (if rowIndex = 0 then 0 else -1)
+        tr.addEventListener (
+            "keydown",
+            fun e ->
+                match eventKey e with
+                | "ArrowDown" ->
+                    preventDefault e
+                    this.FocusRow(rowIndex + 1)
+                | "ArrowUp" ->
+                    preventDefault e
+                    this.FocusRow(rowIndex - 1)
+                | "Home" ->
+                    preventDefault e
+                    this.FocusRow 0
+                | "End" ->
+                    preventDefault e
+                    this.FocusRow(rendered.Count - 1)
+                | "Enter"
+                | " " ->
+                    preventDefault e
+                    this.OnRowClicked vm
+                | _ -> ())
+
         checkbox.addEventListener ("change", (fun _ -> this.OnCheckboxToggled(vm, checkbox, tr)))
         let onClick = (fun (_: obj) -> this.OnRowClicked vm)
         idTd.addEventListener ("click", onClick)
         typeTd.addEventListener ("click", onClick)
         descTd.addEventListener ("click", onClick)
         rendered.Add { Vm = vm; Row = tr; Checkbox = checkbox }
+
+    /// Moves the roving tabIndex + focus to `index` within the currently rendered
+    /// rows (used by the row keydown handler above).
+    member private _.FocusRow(index: int) =
+        if index >= 0 && index < rendered.Count then
+            for i in 0 .. rendered.Count - 1 do
+                rendered.[i].Row.tabIndex <- (if i = index then 0 else -1)
+            rendered.[index].Row.focus ()
 
     member private _.SortSources(method: string, backwards: bool) : SourceVm list =
         let sorted =
@@ -212,6 +386,8 @@ type EventsView(root: Element, post: obj -> unit) as this =
 
     member private this.ApplyFilter() =
         let parsed = parse filterInput.value
+        this.UpdateSortIndicators parsed.Sort
+        this.UpdateErrorChip()
 
         let ordered =
             match parsed.Sort with
@@ -229,11 +405,10 @@ type EventsView(root: Element, post: obj -> unit) as this =
                       IsActive = vm.IsActive
                       SearchText = (fun () -> "") })
 
-        // Deselect any source that no longer matches the filter.
-        let matchedIds = System.Collections.Generic.HashSet<int>()
-        for vm in matched do matchedIds.Add vm.Id |> ignore
-        for vm in sources do
-            if vm.Selected && not (matchedIds.Contains vm.Id) then vm.Selected <- false
+        // Selection is intentionally NOT cleared for sources that fall out of the
+        // filtered/matched set: refining the filter to look at something else
+        // shouldn't silently lose the detail pane's contents. Selections are only
+        // cleared by an explicit user action (selecting another row, unchecking).
 
         // Materialize only the first MaxRenderedRows matches to keep the DOM bounded.
         clear tableBody
@@ -253,6 +428,15 @@ type EventsView(root: Element, post: obj -> unit) as this =
             setNodeDisplay countNote false
 
         this.OnSelectionChanged()
+        onFilterChanged filterInput.value
+
+    /// The filter text, so it can be persisted (see App.fs's setState/getState use).
+    member _.GetFilterText() : string = filterInput.value
+
+    /// Restores a previously-persisted filter text and re-applies it.
+    member this.SetFilterText(text: string) : unit =
+        filterInput.value <- text
+        this.ApplyFilter()
 
     override _.OnLoadLogFinish(model: obj) : bool =
         constants <- Constants.decode (Json.get (Json.get model "constants") "raw")
@@ -288,7 +472,7 @@ type EventsView(root: Element, post: obj -> unit) as this =
         sourceTotal.[id] <- Json.tryNumber data "total" |> Option.defaultValue (float n) |> int
         this.RenderDetails()
 
-let create (post: obj -> unit) : EventsView =
+let create (post: obj -> unit) (onFilterChanged: string -> unit) : EventsView =
     let root = createElement "div"
     root.className <- "nv-view nv-events"
-    EventsView(root, post)
+    EventsView(root, post, onFilterChanged)

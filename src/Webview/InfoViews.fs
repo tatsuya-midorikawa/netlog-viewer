@@ -62,7 +62,7 @@ module Info =
             tp.AddRow()
             for c in rowFn item do
                 tp.AddCell c |> ignore
-        tp.ToHtml(root, "nv-table") |> ignore
+        tp.ToInteractiveHtml(root, "nv-table") |> ignore
 
 module ProxyView =
     let tabId = "proxy"
@@ -184,7 +184,7 @@ module SocketsView =
                     summary.AddCell(Info.valStr p "max_socket_count") |> ignore
                     summary.AddCell(Info.valStr p "max_sockets_per_group") |> ignore
                     summary.AddCell(Info.valStr p "pool_generation_number") |> ignore
-                summary.ToHtml(root, "nv-table") |> ignore
+                summary.ToInteractiveHtml(root, "nv-table") |> ignore
 
                 for p in flat do
                     let groups = Json.get p "groups"
@@ -203,7 +203,7 @@ module SocketsView =
                             gt.AddCell(Info.joinArray g "connect_jobs") |> ignore
                             gt.AddCell(Info.valStr g "backup_job_timer_is_running") |> ignore
                             gt.AddCell(Info.valStr g "is_stalled") |> ignore
-                        gt.ToHtml(root, "nv-table") |> ignore
+                        gt.ToInteractiveHtml(root, "nv-table") |> ignore
                 true
 
     let create () : View =
@@ -236,7 +236,7 @@ module StreamPoolView =
                 prop "Idle sockets" "idle_socket_count"
                 prop "Max sockets" "max_socket_count"
                 prop "Max sockets/group" "max_sockets_per_group"
-                tp.ToHtml(root, "nv-table") |> ignore
+                tp.ToInteractiveHtml(root, "nv-table") |> ignore
 
                 let groups = Json.get info "groups"
                 if Json.isObject groups then
@@ -251,13 +251,15 @@ module StreamPoolView =
                         gt.AddCell(Info.valStr g "handed_out_socket_count") |> ignore
                         gt.AddCell(Info.valStr g "idle_socket_count") |> ignore
                         gt.AddCell(Info.valStr g "attempt_manager_alive") |> ignore
-                    gt.ToHtml(root, "nv-table") |> ignore
+                    gt.ToInteractiveHtml(root, "nv-table") |> ignore
 
                     for gName in Json.keys groups do
                         let attempt = Json.get (Json.get groups gName) "attempt_state"
                         if Json.isObject attempt then
                             Info.addTitle root ("Attempt state: " + gName)
-                            (addNode root "pre").textContent <- Json.stringifyPretty attempt
+                            let details = addNode root "details"
+                            addNodeWithText details "summary" "Show raw attempt state" |> ignore
+                            (addNodeWithText details "pre" (Json.stringifyPretty attempt)) |> ignore
                 true
 
     let create () : View =

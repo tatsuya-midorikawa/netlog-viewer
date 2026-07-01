@@ -65,6 +65,12 @@ type IWorkspace =
 type IUriStatic =
     abstract joinPath: Uri * string * string -> Uri
 
+type IClipboard =
+    abstract writeText: string -> JS.Promise<unit>
+
+type IEnv =
+    abstract clipboard: IClipboard
+
 [<Import("window", "vscode")>]
 let window: IWindow = jsNative
 
@@ -76,6 +82,9 @@ let workspace: IWorkspace = jsNative
 
 [<Import("Uri", "vscode")>]
 let UriStatic: IUriStatic = jsNative
+
+[<Import("env", "vscode")>]
+let env: IEnv = jsNative
 
 [<Emit("$0.toString()")>]
 let uriToString (uri: Uri) : string = jsNative

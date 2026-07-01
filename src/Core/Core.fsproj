@@ -9,6 +9,7 @@
     <Compile Include="Json.fs" />
     <Compile Include="ProxyFormatter.fs" />
     <Compile Include="Model.fs" />
+    <Compile Include="RequestSummary.fs" />
     <Compile Include="TimeUtil.fs" />
     <Compile Include="Constants.fs" />
     <Compile Include="LogGrouper.fs" />

@@ -29,10 +29,10 @@
 
 - **NetLog log viewer**: View `.json` logs captured with `net-export` in a custom editor inside VS Code.
 - **14-tab layout**:
-  - **Import** — Export date and time, capture mode, browser/OS information, command line, and user comments.
-  - **Events** — A list of events grouped by source, with filtering (`type:` / `id:` / `is:active|error` / `sort:`), selection, and event trace details (`t=` / `st=` / `[dt=]`).
-  - **Timeline** — Time-series data such as socket count, request count, and bytes transferred, rendered on a canvas (scroll to zoom, drag to pan).
-  - **Proxy / DNS / Sockets / StreamPool / Alt-Svc / HTTP/2 / QUIC / Reporting / Cache / Modules / Prerender** — Status tables for each subsystem.
+  - **Import** — Export date and time, capture mode, browser/OS information, command line, and user comments, with copy buttons for the command line and comments.
+  - **Events** — A list of events grouped by source, with filtering (`type:` / `id:` / `is:active|error` / `sort:`, also via sortable column headers) and in-app syntax help, an always-visible error count, keyboard navigation, and event trace details (`t=` / `st=` / `[dt=]`). Selecting an HTTP request also shows a Request/Response summary (method, URL, status, headers, timing).
+  - **Timeline** — Time-series data such as socket count, request count, and bytes transferred, rendered on a canvas. Scroll or use the keyboard (arrow keys / +- / Home) to zoom and pan, hover for exact values, and see the current zoom level and time range at a glance.
+  - **Proxy / DNS / Sockets / StreamPool / Alt-Svc / HTTP/2 / QUIC / Reporting / Cache / Modules / Prerender** — Status tables for each subsystem, with a free-text row filter and sortable columns.
 - **Read-only and fully offline**: Never writes to files and never communicates over the network.
 - **No external runtime libraries**: Both the parser and the viewer are built entirely from scratch using only the standard library (see [DEVELOPMENT.md](./DEVELOPMENT.md) for details).
 - **Supports `.json` / `.netlog` / `.gz` (gzip)**.

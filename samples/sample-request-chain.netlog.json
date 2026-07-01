@@ -1,0 +1,55 @@
+{
+  "constants": {
+    "logFormatVersion": 1,
+    "logEventTypes": {
+      "REQUEST_ALIVE": 1,
+      "URL_REQUEST_START_JOB": 2,
+      "HTTP_TRANSACTION_SEND_REQUEST_HEADERS": 3,
+      "HTTP_TRANSACTION_READ_RESPONSE_HEADERS": 4,
+      "HTTP_STREAM_JOB": 5,
+      "SOCKET_ALIVE": 6,
+      "SSL_CERTIFICATES_RECEIVED": 7,
+      "HOST_RESOLVER_IMPL_JOB": 8
+    },
+    "logEventPhase": { "PHASE_NONE": 0, "PHASE_BEGIN": 1, "PHASE_END": 2 },
+    "logSourceType": {
+      "NONE": 0,
+      "URL_REQUEST": 1,
+      "HTTP_STREAM_JOB": 2,
+      "SOCKET": 3,
+      "HOST_RESOLVER_IMPL_JOB": 4
+    },
+    "logCaptureMode": "IncludeSensitive",
+    "loadFlag": { "NORMAL": 0 },
+    "netError": { "OK": 0, "NAME_NOT_RESOLVED": -105 },
+    "addressFamily": { "UNSPEC": 0 },
+    "timeTickOffset": "1700000000000",
+    "clientInfo": {
+      "numericDate": 1700000002200,
+      "name": "Chrome",
+      "version": "125.0.6422.112",
+      "official": "official",
+      "cl": "1313161",
+      "version_mod": "",
+      "os_type": "Mac OS X",
+      "command_line": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --enable-net-benchmarking"
+    }
+  },
+  "userComments": "Repro for a slow example.com page load alongside one failed request to a non-existent host.",
+  "events": [
+    { "source": { "id": 4, "type": 4 }, "type": 8, "time": "1000", "phase": 1, "params": { "host": "example.com" } },
+    { "source": { "id": 1, "type": 1 }, "type": 1, "time": "1005", "phase": 1, "params": { "url": "https://example.com/", "method": "GET" } },
+    { "source": { "id": 4, "type": 4 }, "type": 8, "time": "1050", "phase": 2 },
+    { "source": { "id": 3, "type": 3 }, "type": 6, "time": "1060", "phase": 1, "params": { "source_dependency": { "id": 4, "type": 4 } } },
+    { "source": { "id": 3, "type": 3 }, "type": 7, "time": "1090", "phase": 0, "params": { "certificates": ["-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...FAKE-SAMPLE-DATA...==\n-----END CERTIFICATE-----"] } },
+    { "source": { "id": 2, "type": 2 }, "type": 5, "time": "1130", "phase": 1, "params": { "url": "https://example.com/", "source_dependency": { "id": 3, "type": 3 } } },
+    { "source": { "id": 2, "type": 2 }, "type": 5, "time": "1140", "phase": 2 },
+    { "source": { "id": 1, "type": 1 }, "type": 2, "time": "1150", "phase": 0, "params": { "source_dependency": { "id": 2, "type": 2 } } },
+    { "source": { "id": 1, "type": 1 }, "type": 3, "time": "1160", "phase": 0, "params": { "line": "GET / HTTP/1.1\r\n", "headers": ["Host: example.com", "Accept: */*", "User-Agent: netlog-viewer-sample/1.0"] } },
+    { "source": { "id": 1, "type": 1 }, "type": 4, "time": "1220", "phase": 0, "params": { "headers": ["HTTP/1.1 200 OK", "Content-Type: text/html; charset=utf-8", "Content-Length: 1256", "Server: ExampleServer/1.0"] } },
+    { "source": { "id": 1, "type": 1 }, "type": 1, "time": "1230", "phase": 2 },
+    { "source": { "id": 5, "type": 1 }, "type": 1, "time": "2000", "phase": 1, "params": { "url": "https://nonexistent.invalid/", "method": "GET" } },
+    { "source": { "id": 5, "type": 1 }, "type": 2, "time": "2010", "phase": 0 },
+    { "source": { "id": 5, "type": 1 }, "type": 1, "time": "2050", "phase": 2, "params": { "net_error": -105 } }
+  ]
+}

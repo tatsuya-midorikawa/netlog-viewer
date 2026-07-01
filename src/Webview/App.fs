@@ -17,6 +17,22 @@ let mutable private page = Unchecked.defaultof<Shell.Page>
 let mutable private switcher = Unchecked.defaultof<TabSwitcher.TabSwitcher>
 let mutable private views: (string * ViewBase) list = []
 
+/// The Events tab's concrete view, if it has been registered yet (used to read/
+/// restore its filter text for state persistence below).
+let private eventsView () : EventsView.EventsView option =
+    views
+    |> List.tryFind (fun (id, _) -> id = EventsView.tabId)
+    |> Option.map (fun (_, v) -> v :?> EventsView.EventsView)
+
+/// Persists just enough UI state (active tab, Events filter text) via VS Code's
+/// setState/getState so it survives the webview being hidden and torn down/rebuilt
+/// (VS Code does this by default for custom editors without retainContextWhenHidden).
+/// Called whenever the active tab changes or the Events filter is applied.
+let private saveState () : unit =
+    let activeTab = switcher.ActiveTabId |> Option.defaultValue ""
+    let filterText = eventsView () |> Option.map (fun v -> v.GetFilterText()) |> Option.defaultValue ""
+    vscode.setState (createObj [ "activeTab" ==> activeTab; "filterText" ==> filterText ])
+
 // --- Chunked-load reassembly: loadStart -> sourcesChunk* -> eventsChunk* -> loadEnd ---
 [<Emit("[]")>]
 let private newJsArray () : obj = jsNative
@@ -83,6 +99,17 @@ let private onLoad (model: obj) : unit =
     | Some id -> switcher.SwitchToTab id
     | None -> ()
 
+    // Restore a persisted Events filter text and active tab (e.g. after the webview
+    // was hidden and reloaded from scratch -- see setState/getState in start() /
+    // saveState below). Safe to call with no persisted state (first-ever load).
+    let state = vscode.getState ()
+    match Json.tryString state "filterText" with
+    | Some text when text <> "" -> eventsView () |> Option.iter (fun v -> v.SetFilterText text)
+    | _ -> ()
+    match Json.tryString state "activeTab" with
+    | Some id when id <> "" -> switcher.TrySwitchToTab id |> ignore
+    | _ -> ()
+
 let private onLoadStart (data: obj) : unit =
     pendingModel <- data
     eventChunks <- newJsArray ()
@@ -134,12 +161,12 @@ let private onMessage (e: obj) : unit =
 
 let start () : unit =
     page <- Shell.build ()
-    switcher <- TabSwitcher.TabSwitcher(page.TabList, page.Content)
+    switcher <- TabSwitcher.TabSwitcher(page.TabList, page.Content, (fun _ -> saveState ()))
 
     let tabs: (string * string * ViewBase) list =
-        [ ImportView.tabId, ImportView.tabName, (ImportView.create () :> ViewBase)
+        [ ImportView.tabId, ImportView.tabName, (ImportView.create postToHost :> ViewBase)
           ProxyView.tabId, ProxyView.tabName, (ProxyView.create () :> ViewBase)
-          EventsView.tabId, EventsView.tabName, (EventsView.create postToHost :> ViewBase)
+          EventsView.tabId, EventsView.tabName, (EventsView.create postToHost (fun _ -> saveState ()) :> ViewBase)
           Timeline.tabId, Timeline.tabName, (Timeline.create () :> ViewBase)
           DnsView.tabId, DnsView.tabName, (DnsView.create () :> ViewBase)
           SocketsView.tabId, SocketsView.tabName, (SocketsView.create () :> ViewBase)

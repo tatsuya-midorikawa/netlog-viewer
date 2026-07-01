@@ -519,6 +519,77 @@ match LogParser.loadLogFile sampleText with
 
 printfn ""
 
+// --- samples/sample-request-chain.netlog.json parity ---
+// A small hand-written fixture with a full source_dependency chain (URL_REQUEST ->
+// HTTP_STREAM_JOB -> SOCKET -> HOST_RESOLVER_IMPL_JOB), a real HTTP request/response
+// header exchange, and one failed (net_error) request -- see that file's own shape
+// for the exact events.
+printfn "samples/sample-request-chain.netlog.json parity"
+
+let chainText = readFile "samples/sample-request-chain.netlog.json"
+
+match LogParser.loadLogFile chainText with
+| Error e ->
+    check "request-chain sample loads" false
+    eprintfn "%s" e
+| Ok chainLog ->
+    checkEq "request-chain event count" 14 chainLog.Events.Length
+    checkEq "request-chain source count" 5 chainLog.Sources.Length
+
+    match chainLog.SourceIndex.TryGetValue 3 with
+    | true, socket ->
+        checkEq "SOCKET description (via DNS dependency)" "example.com" socket.Description
+        check "SOCKET stays active (never closed)" (not socket.IsInactive)
+    | _ -> check "source id 3 present" false
+
+    match chainLog.SourceIndex.TryGetValue 5 with
+    | true, failed -> check "failed request flagged as error" failed.IsError
+    | _ -> check "source id 5 present" false
+
+// --- RequestSummary.extract (pure L7 request/response summary) ---
+printfn "RequestSummary.extract"
+
+match LogParser.loadLogFile chainText with
+| Error _ -> check "request-chain baseline loads" false
+| Ok chainLog ->
+    match chainLog.SourceIndex.TryGetValue 1 with
+    | true, urlRequest ->
+        match RequestSummary.extract (urlRequest.Entries.ToArray()) with
+        | None -> check "extracts an exchange for the successful request" false
+        | Some ex ->
+            checkEq "method" "GET" ex.Method
+            checkEq "url" "https://example.com/" ex.Url
+            checkEq "request line" (Some "GET / HTTP/1.1") ex.RequestLine
+            checkEq
+                "request headers"
+                [| "Host: example.com"; "Accept: */*"; "User-Agent: netlog-viewer-sample/1.0" |]
+                ex.RequestHeaders
+            checkEq "status line" (Some "HTTP/1.1 200 OK") ex.StatusLine
+            checkEq
+                "response headers"
+                [| "Content-Type: text/html; charset=utf-8"; "Content-Length: 1256"; "Server: ExampleServer/1.0" |]
+                ex.ResponseHeaders
+            checkEq "request sent ticks" (Some 1160.0) ex.RequestSentTicks
+            checkEq "response headers ticks" (Some 1220.0) ex.ResponseHeadersTicks
+    | _ -> check "source id 1 present" false
+
+    match chainLog.SourceIndex.TryGetValue 5 with
+    | true, failedRequest ->
+        match RequestSummary.extract (failedRequest.Entries.ToArray()) with
+        | None -> check "extracts a partial summary for the failed request" false
+        | Some ex ->
+            checkEq "failed request method (from method param, no headers seen)" "GET" ex.Method
+            checkEq "failed request url" "https://nonexistent.invalid/" ex.Url
+            check "no request line (no header exchange happened)" ex.RequestLine.IsNone
+            check "no status line (no response ever arrived)" ex.StatusLine.IsNone
+    | _ -> check "source id 5 present" false
+
+    match chainLog.SourceIndex.TryGetValue 4 with
+    | true, dnsJob -> check "no summary for a non-HTTP source (no url param at all)" (RequestSummary.extract (dnsJob.Entries.ToArray())).IsNone
+    | _ -> check "source id 4 present" false
+
+printfn ""
+
 if failures > 0 then
     eprintfn "%d test(s) failed" failures
     exitProcess 1

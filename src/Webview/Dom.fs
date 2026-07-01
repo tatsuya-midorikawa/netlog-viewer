@@ -36,6 +36,8 @@ type Element =
     abstract getAttribute: string -> string
     abstract scrollIntoView: unit -> unit
     abstract addEventListener: string * (obj -> unit) -> unit
+    abstract tabIndex: int with get, set
+    abstract focus: unit -> unit
 
 type Document =
     abstract getElementById: string -> Element
@@ -93,6 +95,15 @@ let acquireVsCodeApi () : VsCodeApi = jsNative
 [<Emit("$0.preventDefault()")>]
 let preventDefault (e: obj) : unit = jsNative
 
+/// Used for the brief "Copied!" -> "Copy" button-text revert (ImportView).
+[<Emit("setTimeout($0, $1)")>]
+let setTimeout (f: unit -> unit) (ms: int) : unit = jsNative
+
+/// A MouseEvent's x position relative to its target element's padding box (used by
+/// Timeline's hover status line instead of clientX, which is viewport-relative).
+[<Emit("$0.offsetX")>]
+let eventOffsetX (e: obj) : float = jsNative
+
 let el (id: string) : Element = document.getElementById id
 
 let createElement (tag: string) : Element = document.createElement tag
@@ -126,3 +137,8 @@ let asCanvas (node: Element) : Canvas = jsNative
 
 [<Emit("$0.target")>]
 let eventTarget (e: obj) : Element = jsNative
+
+/// The key name from a KeyboardEvent (e.g. "ArrowDown", "Enter", " "), used for the
+/// keyboard-navigation handlers added across the shell/tabs/tables.
+[<Emit("$0.key")>]
+let eventKey (e: obj) : string = jsNative

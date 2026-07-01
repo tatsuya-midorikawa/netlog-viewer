@@ -22,15 +22,21 @@ let build () : Page =
     fileName.className <- "nv-filename"
 
     // Load status / warning banner (hidden until there is something to report).
+    // role="status" + aria-live="polite" so load progress / truncation / error text
+    // is announced to screen readers as it changes, without needing focus to move.
     let banner = addNode app "div"
     banner.className <- "nv-banner"
     banner.style.display <- "none"
+    banner.setAttribute ("role", "status")
+    banner.setAttribute ("aria-live", "polite")
 
     let body = addNode app "div"
     body.className <- "nv-body"
 
     let tabList = addNode body "div"
     tabList.className <- "nv-tablist"
+    tabList.setAttribute ("role", "tablist")
+    tabList.setAttribute ("aria-orientation", "vertical")
 
     let content = addNode body "div"
     content.className <- "nv-content"
