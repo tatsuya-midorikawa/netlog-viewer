@@ -83,6 +83,14 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
     let mutable idTh = Unchecked.defaultof<Element>
     let mutable typeTh = Unchecked.defaultof<Element>
     let mutable descTh = Unchecked.defaultof<Element>
+    // Cross-source `has:` param search (debounced request to the extension host --
+    // see NetlogEditor.fs's "searchParams" handler -- since the webview only ever
+    // holds a selected source's full params). `paramSearchMatches` caches the ids
+    // for the last query we actually got a response for; a query only restricts the
+    // list once its own matching response has arrived, to avoid flashing empty.
+    let mutable paramSearchTimer: obj = null
+    let mutable paramSearchMatches: (string * Set<int>) option = None
+    let mutable lastRequestedParamQuery: string option = None
 
     do this.BuildLayout()
 
@@ -157,6 +165,7 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
             [ "type:name1,name2 - source type contains name1 or name2"
               "id:1,2 - exact source id"
               "is:active / is:error - state filters"
+              "has:text - search inside event parameters across all sources (may take a moment on large logs)"
               "sort:time|id|active|desc|duration|type - sort (also via column headers)"
               "-token - negate any directive or word above"
               "\"quoted text\" - match a phrase containing spaces"
@@ -389,6 +398,15 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
         this.UpdateSortIndicators parsed.Sort
         this.UpdateErrorChip()
 
+        match parsed.ParamSearch with
+        | Some term when lastRequestedParamQuery <> Some term ->
+            lastRequestedParamQuery <- Some term
+            if not (isNull paramSearchTimer) then
+                clearTimeout paramSearchTimer
+            paramSearchTimer <- setTimeout (fun () -> post (createObj [ "type" ==> "searchParams"; "query" ==> term ])) 300
+        | None -> lastRequestedParamQuery <- None
+        | _ -> ()
+
         let ordered =
             match parsed.Sort with
             | Some(method, backwards) -> this.SortSources(method, backwards)
@@ -397,13 +415,24 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
         let matched =
             ordered
             |> List.filter (fun vm ->
-                parsed.Filter
-                    { FilterSource.Id = vm.Id
-                      TypeName = vm.TypeName
-                      Description = vm.Description
-                      IsError = vm.IsError
-                      IsActive = vm.IsActive
-                      SearchText = (fun () -> "") })
+                let baseMatch =
+                    parsed.Filter
+                        { FilterSource.Id = vm.Id
+                          TypeName = vm.TypeName
+                          Description = vm.Description
+                          IsError = vm.IsError
+                          IsActive = vm.IsActive
+                          StartTicks = TimeUtil.convertTimeTicksToTime vm.StartTicks
+                          EndTicks = TimeUtil.convertTimeTicksToTime (vm.StartTicks + vm.Duration)
+                          SearchText = (fun () -> "") }
+                let paramMatch =
+                    match parsed.ParamSearch with
+                    | None -> true
+                    | Some term ->
+                        match paramSearchMatches with
+                        | Some(cachedTerm, ids) when cachedTerm = term -> ids.Contains vm.Id
+                        | _ -> true
+                baseMatch && paramMatch)
 
         // Selection is intentionally NOT cleared for sources that fall out of the
         // filtered/matched set: refining the filter to look at something else
@@ -437,6 +466,14 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
     member this.SetFilterText(text: string) : unit =
         filterInput.value <- text
         this.ApplyFilter()
+
+    /// The cross-source `has:` param-search response: only actually re-filters if
+    /// the filter text's current `has:` term still matches (a slower-arriving
+    /// response for an already-superseded query is simply discarded).
+    override this.OnSearchParamsResult(query: string, ids: int[]) =
+        paramSearchMatches <- Some(query, Set.ofArray ids)
+        if (parse filterInput.value).ParamSearch = Some query then
+            this.ApplyFilter()
 
     override _.OnLoadLogFinish(model: obj) : bool =
         constants <- Constants.decode (Json.get (Json.get model "constants") "raw")

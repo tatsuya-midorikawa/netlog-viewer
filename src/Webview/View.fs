@@ -21,6 +21,11 @@ type ViewBase(root: Element) =
     abstract OnSourceEvents: int * obj -> unit
     default _.OnSourceEvents(_: int, _: obj) = ()
 
+    /// Delivers the on-demand cross-source `has:` param-search response (the query
+    /// it answers, and the matching source ids). Only the Events view acts on this.
+    abstract OnSearchParamsResult: string * int[] -> unit
+    default _.OnSearchParamsResult(_: string, _: int[]) = ()
+
     abstract Show: bool -> unit
 
     default this.Show(visible: bool) =

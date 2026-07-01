@@ -33,6 +33,13 @@ let private saveState () : unit =
     let filterText = eventsView () |> Option.map (fun v -> v.GetFilterText()) |> Option.defaultValue ""
     vscode.setState (createObj [ "activeTab" ==> activeTab; "filterText" ==> filterText ])
 
+/// Timeline's double-click-to-jump handler: switches to Events and replaces its
+/// filter with a `t:<time>` token so the source list narrows to whatever was active
+/// at that instant, instead of leaving the user to hunt for it by hand.
+let private jumpToEventsAtTime (time: float) : unit =
+    eventsView () |> Option.iter (fun v -> v.SetFilterText(sprintf "t:%d" (int64 time)))
+    switcher.SwitchToTab EventsView.tabId
+
 // --- Chunked-load reassembly: loadStart -> sourcesChunk* -> eventsChunk* -> loadEnd ---
 [<Emit("[]")>]
 let private newJsArray () : obj = jsNative
@@ -153,6 +160,12 @@ let private onMessage (e: obj) : unit =
         let id = Json.tryNumber data "id" |> Option.defaultValue -1.0 |> int
         for (_, v) in views do
             v.OnSourceEvents(id, data)
+    | "searchParamsResult" ->
+        let query = Json.tryString data "query" |> Option.defaultValue ""
+        let idsArr = Json.get data "ids"
+        let ids = Array.init (Json.length idsArr) (fun i -> int (Json.toNumber (Json.item idsArr i)))
+        for (_, v) in views do
+            v.OnSearchParamsResult(query, ids)
     | "load" -> onLoad data
     | "error" ->
         setFileName "Failed to load"
@@ -167,7 +180,7 @@ let start () : unit =
         [ ImportView.tabId, ImportView.tabName, (ImportView.create postToHost :> ViewBase)
           ProxyView.tabId, ProxyView.tabName, (ProxyView.create () :> ViewBase)
           EventsView.tabId, EventsView.tabName, (EventsView.create postToHost (fun _ -> saveState ()) :> ViewBase)
-          Timeline.tabId, Timeline.tabName, (Timeline.create () :> ViewBase)
+          Timeline.tabId, Timeline.tabName, (Timeline.create jumpToEventsAtTime :> ViewBase)
           DnsView.tabId, DnsView.tabName, (DnsView.create () :> ViewBase)
           SocketsView.tabId, SocketsView.tabName, (SocketsView.create () :> ViewBase)
           StreamPoolView.tabId, StreamPoolView.tabName, (StreamPoolView.create () :> ViewBase)

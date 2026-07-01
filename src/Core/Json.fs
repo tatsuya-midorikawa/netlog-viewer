@@ -13,6 +13,12 @@ let parse (s: string) : obj = jsNative
 [<Emit("JSON.stringify($0, null, 2)")>]
 let stringifyPretty (o: obj) : string = jsNative
 
+/// Compact (no indentation) JSON.stringify -- used where the text is only ever
+/// substring-searched, not displayed, so the extra whitespace of stringifyPretty
+/// would be pure overhead (Events tab's cross-source `has:` param search).
+[<Emit("JSON.stringify($0)")>]
+let stringify (o: obj) : string = jsNative
+
 [<Emit("typeof $0 === 'object' && $0 !== null")>]
 let isObject (o: obj) : bool = jsNative
 

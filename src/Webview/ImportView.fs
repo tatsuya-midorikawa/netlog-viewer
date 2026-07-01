@@ -44,7 +44,7 @@ type ImportView(root: Element, post: obj -> unit) =
                         preventDefault e
                         post (createObj [ "type" ==> "copyToClipboard"; "text" ==> value ])
                         btn.textContent <- "Copied!"
-                        setTimeout (fun () -> btn.textContent <- "Copy") 1200)
+                        setTimeout (fun () -> btn.textContent <- "Copy") 1200 |> ignore)
 
         let numericDate = Json.tryNumber model "numericDate" |> Option.defaultValue 0.0
         addRow "Export date:" (TimeUtil.dateToStringMs numericDate)

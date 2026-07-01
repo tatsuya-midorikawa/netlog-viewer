@@ -95,9 +95,14 @@ let acquireVsCodeApi () : VsCodeApi = jsNative
 [<Emit("$0.preventDefault()")>]
 let preventDefault (e: obj) : unit = jsNative
 
-/// Used for the brief "Copied!" -> "Copy" button-text revert (ImportView).
+/// Used for the brief "Copied!" -> "Copy" button-text revert (ImportView) and for
+/// debouncing the Events tab's `has:` param-search request. Returns the timer
+/// handle so a pending call can be cancelled via clearTimeout.
 [<Emit("setTimeout($0, $1)")>]
-let setTimeout (f: unit -> unit) (ms: int) : unit = jsNative
+let setTimeout (f: unit -> unit) (ms: int) : obj = jsNative
+
+[<Emit("clearTimeout($0)")>]
+let clearTimeout (handle: obj) : unit = jsNative
 
 /// A MouseEvent's x position relative to its target element's padding box (used by
 /// Timeline's hover status line instead of clientX, which is viewport-relative).

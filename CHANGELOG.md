@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Timeline legend's checkboxes are now properly associated with their series names for screen readers, and are a single click target (checkbox, swatch, and label together).
 - The Proxy / DNS / Sockets / StreamPool / Alt-Svc / HTTP/2 / QUIC / Reporting / Cache / Modules / Prerender tables now have a free-text row filter and clickable, sortable column headers.
 - “Copy” buttons for the command line and user comments fields on the Import tab.
+- The Events filter now supports a `has:<text>` directive that searches inside event parameters across all sources, for finding requests by header, URL, or other parameter text that isn't visible in the id/type/description columns.
+- Double-clicking the Timeline graph now jumps to the Events tab filtered to the sources that were active at that point in time, making it easy to go from a spike in the graph to the events that caused it.
 
 ### Changed
 

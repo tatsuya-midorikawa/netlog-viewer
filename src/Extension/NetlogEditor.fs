@@ -116,6 +116,28 @@ let private handleMessage
         | Some text when text <> "" -> env.clipboard.writeText text |> ignore
         | _ -> ()
 
+    | "searchParams" ->
+        // Cross-source parameter search (the `has:` filter directive): the webview
+        // only ever holds a selected source's full params (see sourceEventsMessage
+        // above), so a search across every source's params has to happen here,
+        // where the whole parsed log is already resident.
+        match logHolder.Value with
+        | Some log ->
+            let query = Json.tryString msg "query" |> Option.defaultValue ""
+            if query <> "" then
+                let q = query.ToLower()
+                let matchingIds =
+                    log.Sources
+                    |> Array.filter (fun se ->
+                        se.Entries
+                        |> Seq.exists (fun e ->
+                            match e.Params with
+                            | Some p -> (Json.stringify p).ToLower().Contains q
+                            | None -> false))
+                    |> Array.map SourceGrouping.sourceId
+                post (createObj [ "type" ==> "searchParamsResult"; "query" ==> query; "ids" ==> matchingIds ])
+        | None -> ()
+
     | _ -> ()
 
 let private resolve (context: ExtensionContext) (document: CustomDocument) (panel: WebviewPanel) : unit =

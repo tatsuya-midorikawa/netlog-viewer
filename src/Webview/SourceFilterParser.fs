@@ -8,11 +8,22 @@ type FilterSource =
       Description: string
       IsError: bool
       IsActive: bool
+      // Wall-clock ms (same space as TimeUtil.convertTimeTicksToTime), used only by
+      // the `t:` directive below (e.g. from a Timeline double-click). Callers that
+      // don't care about time filtering can pass 0.0/0.0.
+      StartTicks: float
+      EndTicks: float
       SearchText: unit -> string }
 
 type ParsedFilter =
     { Filter: FilterSource -> bool
-      Sort: (string * bool) option }
+      Sort: (string * bool) option
+      // The `has:<text>` directive's term, if present. Unlike every other directive,
+      // this can't be evaluated client-side (event params aren't all loaded up
+      // front -- see Wire.fs's on-demand design) -- the caller is expected to ask
+      // the extension host (a "searchParams" message) which source ids match, then
+      // additionally restrict by that result once it arrives.
+      ParamSearch: string option }
 
 type private Token = { Parsed: string; Negated: bool }
 
@@ -78,6 +89,18 @@ let private tryStringDirective (parsed: string) : (FilterSource -> bool) option 
         | "id" -> Some(fun s -> parameters |> Array.contains (string s.Id))
         | _ -> None
 
+/// `t:<wallClockMs>` -- sources active at that instant (StartTicks <= t <= EndTicks,
+/// both already wall-clock-converted by the caller). Primarily produced by
+/// double-clicking the Timeline graph (see Timeline.fs/App.fs), not hand-typed, but
+/// still a plain filter-text token like everything else.
+let private tryTimeAt (parsed: string) : (FilterSource -> bool) option =
+    if parsed.StartsWith "t:" then
+        match System.Double.TryParse(parsed.Substring 2) with
+        | true, t -> Some(fun s -> s.StartTicks <= t && t <= s.EndTicks)
+        | false, _ -> None
+    else
+        None
+
 let private textPredicate (text: string) : FilterSource -> bool =
     fun s ->
         s.Description.ToLower().Contains text
@@ -85,24 +108,41 @@ let private textPredicate (text: string) : FilterSource -> bool =
         || (string s.Id).Contains text
         || (s.SearchText()).ToLower().Contains text
 
+/// `has:<text>` extraction (see ParsedFilter.ParamSearch's doc comment for why this
+/// isn't a synchronous predicate like everything else here).
+let private tryParamSearch (parsed: string) : string option =
+    if parsed.StartsWith "has:" then
+        let term = parsed.Substring 4
+        if term.Length > 0 then Some term else None
+    else
+        None
+
 let parse (filterText: string) : ParsedFilter =
     let mutable sort = None
+    let mutable paramSearch = None
     let preds = ResizeArray<FilterSource -> bool>()
 
     for tok in parseTokens filterText do
         match trySort tok.Parsed tok.Negated with
         | Some s -> sort <- Some s
         | None ->
-            let directive =
-                match tryRestrict tok.Parsed with
-                | Some f -> Some f
-                | None -> tryStringDirective tok.Parsed
-
-            match directive with
-            | Some f -> preds.Add(if tok.Negated then (fun s -> not (f s)) else f)
+            match tryParamSearch tok.Parsed with
+            | Some term -> paramSearch <- Some term
             | None ->
-                let p = textPredicate tok.Parsed
-                preds.Add(if tok.Negated then (fun s -> not (p s)) else p)
+                let directive =
+                    match tryRestrict tok.Parsed with
+                    | Some f -> Some f
+                    | None ->
+                        match tryStringDirective tok.Parsed with
+                        | Some f -> Some f
+                        | None -> tryTimeAt tok.Parsed
+
+                match directive with
+                | Some f -> preds.Add(if tok.Negated then (fun s -> not (f s)) else f)
+                | None ->
+                    let p = textPredicate tok.Parsed
+                    preds.Add(if tok.Negated then (fun s -> not (p s)) else p)
 
     { Filter = (fun s -> preds |> Seq.forall (fun p -> p s))
-      Sort = sort }
+      Sort = sort
+      ParamSearch = paramSearch }

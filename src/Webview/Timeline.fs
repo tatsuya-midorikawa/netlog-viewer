@@ -412,6 +412,11 @@ type private GraphView() =
                 |> List.map (fun (s, v) -> s.Name + ": " + formatValue s.DataType v)
             localeTime time + " \u2014 " + String.concat ", " parts
 
+    /// The wall-clock time (same space as source StartTicks/EndTicks once converted
+    /// via TimeUtil.convertTimeTicksToTime) at a given screen x -- used by the
+    /// double-click-to-jump-to-Events handler in View below.
+    member this.TimeAtScreenX(screenX: float) : float = this.VisibleStartTime(canvasWidth) + screenX * scale
+
     member this.Repaint(canvas: Canvas) =
         let width = float canvas.width
         let mutable height = float canvas.height
@@ -455,7 +460,7 @@ let private toEvent (w: obj) : Model.Event =
       StartTime = None
       Params = (let p = Json.get w "params" in if Json.isObject p then Some p else None) }
 
-type View(root: Element) as this =
+type View(root: Element, onJumpToTime: float -> unit) as this =
     inherit ViewBase(root)
 
     let graph = GraphView()
@@ -499,19 +504,27 @@ type View(root: Element) as this =
         canvasEl.setAttribute ("role", "img")
         canvasEl.setAttribute (
             "aria-label",
-            "Network activity timeline. Arrow keys pan, plus and minus zoom, Home resets. Hover for values.")
+            "Network activity timeline. Arrow keys pan, plus and minus zoom, Home resets. Hover for values. Double-click to jump to the Events tab filtered to that time.")
         canvasEl.addEventListener ("wheel", this.OnWheel)
         canvasEl.addEventListener ("mousedown", this.OnMouseDown)
         canvasEl.addEventListener ("mousemove", this.OnMouseMove)
         canvasEl.addEventListener ("mouseup", (fun _ -> isDragging <- false))
         canvasEl.addEventListener ("mouseout", (fun _ -> isDragging <- false; this.Repaint()))
         canvasEl.addEventListener ("keydown", this.OnKeyDown)
+        canvasEl.addEventListener ("dblclick", this.OnDoubleClick)
 
     /// Repaints the canvas and refreshes the always-visible time-range/scale status
     /// line, so the two can never show stale/inconsistent info relative to each other.
     member private this.Repaint() =
         graph.Repaint this.Canvas
         statusEl.textContent <- graph.DescribeView()
+
+    /// Double-click = "jump to Events at this point in time" (addresses the "can't
+    /// correlate a timeline spike with the events that caused it" gap), rather than
+    /// overloading a plain click, which would be ambiguous with drag-to-pan.
+    member private this.OnDoubleClick(e: obj) =
+        preventDefault e
+        onJumpToTime (graph.TimeAtScreenX(eventOffsetX e))
 
     member private this.ResizeAndRepaint() =
         let c = this.Canvas
@@ -627,7 +640,7 @@ type View(root: Element) as this =
         if this.IsVisible then this.ResizeAndRepaint()
         true
 
-let create () : View =
+let create (onJumpToTime: float -> unit) : View =
     let root = createElement "div"
     root.className <- "nv-view nv-timeline"
-    View(root)
+    View(root, onJumpToTime)

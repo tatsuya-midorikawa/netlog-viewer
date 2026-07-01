@@ -36,7 +36,14 @@ let wstr (o: obj) (k: string) : string = Json.tryString o k |> Option.defaultVal
 let wnum (o: obj) (k: string) : float = Json.tryNumber o k |> Option.defaultValue 0.0
 
 let mkFilterSource id typeName desc err active : Netlog.Webview.SourceFilterParser.FilterSource =
-    { Id = id; TypeName = typeName; Description = desc; IsError = err; IsActive = active; SearchText = (fun () -> "") }
+    { Id = id
+      TypeName = typeName
+      Description = desc
+      IsError = err
+      IsActive = active
+      StartTicks = 0.0
+      EndTicks = 0.0
+      SearchText = (fun () -> "") }
 
 // A truncated --log-net-log style dump (no closing "]}", trailing ",\n").
 let truncatedDump =
@@ -119,6 +126,34 @@ checkEq "text desc matches" true ((Netlog.Webview.SourceFilterParser.parse "exam
 checkEq "sort duration" (Some("duration", false)) (Netlog.Webview.SourceFilterParser.parse "sort:duration").Sort
 checkEq "sort backwards" (Some("id", true)) (Netlog.Webview.SourceFilterParser.parse "-sort:id").Sort
 
+// --- Source filter: t: (time-range, e.g. from a Timeline double-click) ---
+let timedSrc: Netlog.Webview.SourceFilterParser.FilterSource =
+    { Id = 3
+      TypeName = "SOCKET"
+      Description = ""
+      IsError = false
+      IsActive = true
+      StartTicks = 1000.0
+      EndTicks = 2000.0
+      SearchText = (fun () -> "") }
+checkEq "t: inside range matches" true ((Netlog.Webview.SourceFilterParser.parse "t:1500").Filter timedSrc)
+checkEq "t: at exact start matches" true ((Netlog.Webview.SourceFilterParser.parse "t:1000").Filter timedSrc)
+checkEq "t: at exact end matches" true ((Netlog.Webview.SourceFilterParser.parse "t:2000").Filter timedSrc)
+checkEq "t: before range rejects" false ((Netlog.Webview.SourceFilterParser.parse "t:500").Filter timedSrc)
+checkEq "t: after range rejects" false ((Netlog.Webview.SourceFilterParser.parse "t:2500").Filter timedSrc)
+
+// --- Source filter: has: (cross-source param search directive extraction) ---
+checkEq "has: extracted, not a sync predicate" (Some "secrettoken") (Netlog.Webview.SourceFilterParser.parse "has:secrettoken").ParamSearch
+checkEq "no has: -> ParamSearch None" None (Netlog.Webview.SourceFilterParser.parse "type:url_request").ParamSearch
+checkEq
+    "has: combines with a sync directive"
+    true
+    ((Netlog.Webview.SourceFilterParser.parse "type:url_request has:token").Filter urlReq)
+checkEq
+    "has: term does not itself affect the sync Filter"
+    false
+    ((Netlog.Webview.SourceFilterParser.parse "type:socket has:token").Filter urlReq)
+
 // --- ProxyFormatter ---
 printfn "ProxyFormatter"
 checkEq "proxy direct" "Use DIRECT connections." (ProxyFormatter.proxySettingsToString (Json.parse "{}"))
@@ -142,6 +177,8 @@ let searchableSrc: Netlog.Webview.SourceFilterParser.FilterSource =
       Description = "https://nomatch/"
       IsError = false
       IsActive = true
+      StartTicks = 0.0
+      EndTicks = 0.0
       SearchText = (fun () -> "Authorization: Bearer SECRETTOKEN") }
 checkEq "text search via painted text" true ((Netlog.Webview.SourceFilterParser.parse "secrettoken").Filter searchableSrc)
 checkEq "text search no false-positive" false ((Netlog.Webview.SourceFilterParser.parse "notpresent").Filter searchableSrc)
