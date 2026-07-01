@@ -41,22 +41,66 @@ let private buildHtml (webview: Webview) (nonce: string) (scriptUri: string) (st
 </body>
 </html>"""
 
-let private handleMessage (webview: Webview) (document: CustomDocument) (msg: obj) : unit =
+let private postError (webview: Webview) (message: string) : unit =
+    webview.postMessage (createObj [ "type" ==> "error"; "message" ==> message ]) |> ignore
+
+/// Reads the configured event cap (absent/non-number -> default). Files with more
+/// events are truncated with a warning so memory stays bounded.
+let private readMaxEvents () : int =
+    let v = (workspace.getConfiguration "netlogViewer").get ("maxEvents", box 2000000)
+    if Json.isNumber v then int (Json.toNumber v) else 2000000
+
+/// Fallback loader for non-local (virtual) documents: read the whole buffer at once,
+/// then hand the parsed log to `onLog`.
+let private loadViaBuffer (webview: Webview) (uri: Uri) (onLog: LogParser.LoadedLog -> unit) : unit =
+    promiseThen (workspace.fs.readFile uri) (fun bytes ->
+        let b = box bytes
+        try
+            let rawBytes = if Node.isGzip b then Node.gunzipSync b else b
+            let text = Node.decodeUtf8 rawBytes
+            match LogParser.loadLogFile text with
+            | Ok log -> onLog log
+            | Error err -> postError webview err
+        with ex ->
+            postError webview ("Failed to load: " + string ex))
+
+let private handleMessage
+    (webview: Webview)
+    (document: CustomDocument)
+    (logHolder: LogParser.LoadedLog option ref)
+    (msg: obj)
+    : unit =
+    let post (m: obj) : unit = webview.postMessage m |> ignore
     let msgType: string = getProp msg "type"
-    if msgType = "ready" then
-        promiseThen (workspace.fs.readFile document.uri) (fun bytes ->
-            let fileName = basename document.uri.path
-            let b = box bytes
-            try
-                let rawBytes = if Node.isGzip b then Node.gunzipSync b else b
-                let text = Node.decodeUtf8 rawBytes
-                match LogParser.loadLogFile text with
-                | Ok log -> webview.postMessage (Wire.build fileName log) |> ignore
-                | Error err ->
-                    webview.postMessage (createObj [ "type" ==> "error"; "message" ==> err ]) |> ignore
-            with ex ->
-                webview.postMessage (createObj [ "type" ==> "error"; "message" ==> ("Failed to load: " + string ex) ])
-                |> ignore)
+
+    match msgType with
+    | "ready" ->
+        let uri = document.uri
+        let fileName = basename uri.path
+
+        let onLog (log: LogParser.LoadedLog) : unit =
+            logHolder.Value <- Some log
+            Wire.postLoad post fileName log
+
+        if uri.scheme = "file" then
+            // Large files: stream from disk so we never build one giant string.
+            StreamLoader.load uri.fsPath (readMaxEvents ()) onLog (postError webview)
+        else
+            // Virtual / non-local documents have no local path to stream; fall back to
+            // the whole-buffer read (best effort, bounded by VS Code's own limits).
+            loadViaBuffer webview uri onLog
+
+    | "getSourceEvents" ->
+        // On-demand details: return just the selected source's events.
+        match logHolder.Value with
+        | Some log ->
+            let id = Json.tryNumber msg "id" |> Option.defaultValue -1.0 |> int
+            match log.SourceIndex.TryGetValue id with
+            | true, se -> post (Wire.sourceEventsMessage id se.Entries)
+            | _ -> ()
+        | None -> ()
+
+    | _ -> ()
 
 let private resolve (context: ExtensionContext) (document: CustomDocument) (panel: WebviewPanel) : unit =
     let webview = panel.webview
@@ -76,7 +120,8 @@ let private resolve (context: ExtensionContext) (document: CustomDocument) (pane
 
     let nonce = makeNonce ()
     webview.html <- buildHtml webview nonce scriptUri styleUri
-    webview.onDidReceiveMessage(handleMessage webview document) |> ignore
+    let logHolder: LogParser.LoadedLog option ref = ref None
+    webview.onDidReceiveMessage(handleMessage webview document logHolder) |> ignore
 
 let create (context: ExtensionContext) : CustomReadonlyEditorProvider =
     { new CustomReadonlyEditorProvider with

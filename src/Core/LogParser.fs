@@ -21,6 +21,142 @@ type LoadedLog =
       LastEventTicks: float
       LoadLog: string }
 
+/// Validates a raw constants object and decodes it, returning the abort message on
+/// failure. Shared by the batch (loadLogDump) and streaming (StreamingParser) paths.
+let checkConstants (constantsRaw: obj) : Result<Constants.Constants, string> =
+    if not (Constants.areValid constantsRaw) then
+        Error "Load failed:\n\nInvalid constants object.\n"
+    elif Json.isObject constantsRaw && not (Json.isNumber (Json.get constantsRaw "logFormatVersion")) then
+        Error "Load failed:\n\nInvalid version number.\n"
+    else
+        let constants = Constants.decode constantsRaw
+
+        if constants.LogFormatVersion <> SupportedLogFormatVersion then
+            Error(
+                sprintf
+                    "Unable to load different log version. Found %d, Expected %d"
+                    constants.LogFormatVersion
+                    SupportedLogFormatVersion
+            )
+        else
+            Ok constants
+
+/// Accumulates validated events and their grouped sources as events arrive one at a
+/// time. Lets the batch loader and the streaming loader share the exact same
+/// per-event validity filter and source-grouping logic.
+type IngestState =
+    { Constants: Constants.Constants
+      ValidEvents: ResizeArray<Event>
+      SourceOrder: ResizeArray<SourceGrouping.SourceEntry>
+      SourceIndex: Dictionary<int, SourceGrouping.SourceEntry>
+      mutable NumDeprecatedPassive: int
+      mutable TotalSeen: int }
+
+let newIngest (constants: Constants.Constants) : IngestState =
+    { Constants = constants
+      ValidEvents = ResizeArray<Event>()
+      SourceOrder = ResizeArray<SourceGrouping.SourceEntry>()
+      SourceIndex = Dictionary<int, SourceGrouping.SourceEntry>()
+      NumDeprecatedPassive = 0
+      TotalSeen = 0 }
+
+/// Port of the per-event body of loadLogDump's validity filter: validates a single
+/// raw event object and, when valid, appends it and updates its source grouping.
+let ingestEvent (st: IngestState) (ev: obj) : unit =
+    st.TotalSeen <- st.TotalSeen + 1
+    let constants = st.Constants
+    let src = Json.get ev "source"
+    let timeRaw = Json.get ev "time"
+    let typeRaw = Json.get ev "type"
+    let phaseRaw = Json.get ev "phase"
+
+    let typeId = if Json.isNumber typeRaw then Some(int (Json.toNumber typeRaw)) else None
+    let srcTypeRaw = Json.get src "type"
+    let srcTypeId =
+        if Json.isObject src && Json.isNumber srcTypeRaw then Some(int (Json.toNumber srcTypeRaw)) else None
+    let phaseId = if Json.isNumber phaseRaw then Some(int (Json.toNumber phaseRaw)) else None
+
+    let okSource = Json.isObject src
+    let okTime = Json.isString timeRaw
+    let okType = match typeId with Some t -> Map.containsKey t constants.EventTypeNames | None -> false
+    let okSourceType = match srcTypeId with Some t -> Map.containsKey t constants.SourceTypeNames | None -> false
+    let okPhase = match phaseId with Some ph -> constants.ValidPhaseValues.Contains ph | None -> false
+
+    if okSource && okTime && okType && okSourceType && okPhase then
+        if Json.isTruthy (Json.get ev "wasPassivelyCaptured") then
+            st.NumDeprecatedPassive <- st.NumDeprecatedPassive + 1
+        else
+            let startTimeRaw = Json.get src "start_time"
+            let event =
+                { Index = st.ValidEvents.Count
+                  Time = Json.toNumber timeRaw
+                  Type = typeId.Value
+                  Phase = phaseId.Value
+                  SourceId = (match Json.tryNumber src "id" with Some idv -> int idv | None -> 0)
+                  SourceType = srcTypeId.Value
+                  StartTime = (if Json.isDefined startTimeRaw then Some(Json.toNumber startTimeRaw) else None)
+                  Params = (let p = Json.get ev "params" in if Json.isObject p then Some p else None) }
+            st.ValidEvents.Add event
+
+            match st.SourceIndex.TryGetValue event.SourceId with
+            | true, se -> SourceGrouping.update constants st.SourceIndex se event
+            | _ ->
+                let se = SourceGrouping.create constants st.SourceIndex event
+                st.SourceIndex.[event.SourceId] <- se
+                st.SourceOrder.Add se
+
+/// Port of the tail of loadLogDump: sets base time, synthesises the export date,
+/// tallies discarded events, and assembles the LoadedLog. `leadingWarn` carries any
+/// warnings collected upstream (e.g. truncation), preserving the original ordering.
+let finalizeIngest
+    (st: IngestState)
+    (polledData: obj)
+    (tabData: obj)
+    (userComments: string option)
+    (leadingWarn: string)
+    : LoadedLog =
+    let events = st.ValidEvents.ToArray()
+
+    // Base time = wall-clock of the first event (for relative time display).
+    if events.Length > 0 then
+        TimeUtil.setBaseTime (TimeUtil.convertTimeTicksToTime events.[0].Time)
+
+    let mutable errorString = leadingWarn
+
+    // Determine export date (port of the numericDate synthesis).
+    let numericDate =
+        match Json.tryNumber st.Constants.ClientInfo "numericDate" with
+        | Some d -> d
+        | None ->
+            if events.Length > 0 then
+                TimeUtil.convertTimeTicksToTime events.[events.Length - 1].Time
+            else
+                errorString <- errorString + "Can't guess export date as there are no events.\n"
+                0.0
+
+    let sources = st.SourceOrder.ToArray()
+
+    let numInvalid = st.TotalSeen - (events.Length + st.NumDeprecatedPassive)
+    if numInvalid > 0 then
+        errorString <- errorString + sprintf "Unable to load %d events, due to invalid data.\n\n" numInvalid
+    if st.NumDeprecatedPassive > 0 then
+        errorString <-
+            errorString
+            + sprintf "Discarded %d passively collected events. Use an older version of Chrome to load this dump if you want to see them.\n\n" st.NumDeprecatedPassive
+
+    let lastTicks = if events.Length > 0 then events.[events.Length - 1].Time else 0.0
+
+    { Constants = st.Constants
+      Events = events
+      Sources = sources
+      SourceIndex = st.SourceIndex
+      PolledData = polledData
+      TabData = tabData
+      UserComments = userComments
+      NumericDate = numericDate
+      LastEventTicks = lastTicks
+      LoadLog = errorString + "Log loaded." }
+
 /// Port of loadLogDump. Returns Error with the abort message, or Ok with the
 /// loaded log (whose LoadLog field carries any non-fatal warnings).
 let loadLogDump (logDump: obj) : Result<LoadedLog, string> =
@@ -64,86 +200,13 @@ let loadLogDump (logDump: obj) : Result<LoadedLog, string> =
 
     TimeUtil.setTimeTickOffset constants.TimeTickOffset
 
-    // Validate and collect events (port of the validity filter in loadLogDump).
-    let validEvents = ResizeArray<Event>()
-    let mutable numDeprecatedPassive = 0
+    let st = newIngest constants
     let total = if Json.isArray eventsRaw then Json.length eventsRaw else 0
 
     for i in 0 .. total - 1 do
-        let ev = Json.item eventsRaw i
-        let src = Json.get ev "source"
-        let timeRaw = Json.get ev "time"
-        let typeRaw = Json.get ev "type"
-        let phaseRaw = Json.get ev "phase"
+        ingestEvent st (Json.item eventsRaw i)
 
-        let typeId = if Json.isNumber typeRaw then Some(int (Json.toNumber typeRaw)) else None
-        let srcTypeRaw = Json.get src "type"
-        let srcTypeId =
-            if Json.isObject src && Json.isNumber srcTypeRaw then Some(int (Json.toNumber srcTypeRaw)) else None
-        let phaseId = if Json.isNumber phaseRaw then Some(int (Json.toNumber phaseRaw)) else None
-
-        let okSource = Json.isObject src
-        let okTime = Json.isString timeRaw
-        let okType = match typeId with Some t -> Map.containsKey t constants.EventTypeNames | None -> false
-        let okSourceType = match srcTypeId with Some t -> Map.containsKey t constants.SourceTypeNames | None -> false
-        let okPhase = match phaseId with Some ph -> constants.ValidPhaseValues.Contains ph | None -> false
-
-        if okSource && okTime && okType && okSourceType && okPhase then
-            if Json.isTruthy (Json.get ev "wasPassivelyCaptured") then
-                numDeprecatedPassive <- numDeprecatedPassive + 1
-            else
-                let startTimeRaw = Json.get src "start_time"
-                let event =
-                    { Index = validEvents.Count
-                      Time = Json.toNumber timeRaw
-                      Type = typeId.Value
-                      Phase = phaseId.Value
-                      SourceId = (match Json.tryNumber src "id" with Some idv -> int idv | None -> 0)
-                      SourceType = srcTypeId.Value
-                      StartTime = (if Json.isDefined startTimeRaw then Some(Json.toNumber startTimeRaw) else None)
-                      Params = (let p = Json.get ev "params" in if Json.isObject p then Some p else None) }
-                validEvents.Add event
-
-    let events = validEvents.ToArray()
-
-    // Base time = wall-clock of the first event (for relative time display).
-    if events.Length > 0 then
-        TimeUtil.setBaseTime (TimeUtil.convertTimeTicksToTime events.[0].Time)
-
-    // Determine export date (port of the numericDate synthesis).
-    let numericDate =
-        match Json.tryNumber constants.ClientInfo "numericDate" with
-        | Some d -> d
-        | None ->
-            if events.Length > 0 then
-                TimeUtil.convertTimeTicksToTime events.[events.Length - 1].Time
-            else
-                errorString <- errorString + "Can't guess export date as there are no events.\n"
-                0.0
-
-    let sources, sourceIndex = SourceGrouping.buildSources constants events
-
-    let numInvalid = total - (events.Length + numDeprecatedPassive)
-    if numInvalid > 0 then
-        errorString <- errorString + sprintf "Unable to load %d events, due to invalid data.\n\n" numInvalid
-    if numDeprecatedPassive > 0 then
-        errorString <-
-            errorString
-            + sprintf "Discarded %d passively collected events. Use an older version of Chrome to load this dump if you want to see them.\n\n" numDeprecatedPassive
-
-    let lastTicks = if events.Length > 0 then events.[events.Length - 1].Time else 0.0
-
-    Ok
-        { Constants = constants
-          Events = events
-          Sources = sources
-          SourceIndex = sourceIndex
-          PolledData = polledData
-          TabData = tabData
-          UserComments = Json.tryString logDump "userComments"
-          NumericDate = numericDate
-          LastEventTicks = lastTicks
-          LoadLog = errorString + "Log loaded." }
+    Ok(finalizeIngest st polledData tabData (Json.tryString logDump "userComments") "")
 
 /// Port of loadLogFile: parse JSON, with a fallback for truncated --log-net-log files.
 let loadLogFile (text: string) : Result<LoadedLog, string> =

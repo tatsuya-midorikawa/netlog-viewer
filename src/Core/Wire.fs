@@ -40,10 +40,11 @@ let private sourceDto (c: Constants.Constants) (now: float) (s: SourceGrouping.S
         "eventCount" ==> s.Entries.Count
     ]
 
-/// Builds the load message from a parsed log.
-let build (fileName: string) (log: LogParser.LoadedLog) : obj =
+/// Builds the shared metadata object (everything except the events/sources arrays).
+/// `msgType` distinguishes the self-contained `load` message from the streamed
+/// `loadStart` message.
+let private metaObj (msgType: string) (fileName: string) (log: LogParser.LoadedLog) : obj =
     let c = log.Constants
-    let now = log.LastEventTicks
 
     let constantsDto =
         createObj [
@@ -56,7 +57,7 @@ let build (fileName: string) (log: LogParser.LoadedLog) : obj =
         ]
 
     createObj [
-        "type" ==> "load"
+        "type" ==> msgType
         "fileName" ==> fileName
         "loadLog" ==> log.LoadLog
         "numericDate" ==> log.NumericDate
@@ -65,8 +66,6 @@ let build (fileName: string) (log: LogParser.LoadedLog) : obj =
         "userComments" ==> Option.toObj log.UserComments
         "clientInfo" ==> c.ClientInfo
         "constants" ==> constantsDto
-        "events" ==> (log.Events |> Array.map eventDto)
-        "sources" ==> (log.Sources |> Array.map (sourceDto c now))
         "polledData" ==> log.PolledData
         "tabData" ==> log.TabData
         "stats"
@@ -74,4 +73,53 @@ let build (fileName: string) (log: LogParser.LoadedLog) : obj =
             "eventCount" ==> log.Events.Length
             "sourceCount" ==> log.Sources.Length
         ]
+    ]
+
+/// Builds the single, self-contained load message (used by tests and the non-local
+/// fallback loader). Carries all events + sources inline.
+let build (fileName: string) (log: LogParser.LoadedLog) : obj =
+    let o = metaObj "load" fileName log
+    setProp o "events" (log.Events |> Array.map eventDto)
+    setProp o "sources" (log.Sources |> Array.map (sourceDto log.Constants log.LastEventTicks))
+    o
+
+[<Literal>]
+let private ChunkSize = 50000
+
+/// Streams the load to the webview as a sequence of messages
+/// (`loadStart` -> `sourcesChunk*` -> `eventsChunk*` -> `loadEnd`) so no single
+/// postMessage has to structured-clone the entire (possibly huge) events array at
+/// once, and so the webview can report load progress. The webview reassembles the
+/// chunks into the same model the self-contained `build` message would have produced.
+let postLoad (post: obj -> unit) (fileName: string) (log: LogParser.LoadedLog) : unit =
+    let c = log.Constants
+    let now = log.LastEventTicks
+    post (metaObj "loadStart" fileName log)
+
+    let sources = log.Sources
+    let mutable i = 0
+    while i < sources.Length do
+        let n = min ChunkSize (sources.Length - i)
+        let slice = Array.sub sources i n |> Array.map (sourceDto c now)
+        post (createObj [ "type" ==> "sourcesChunk"; "sources" ==> slice ])
+        i <- i + n
+
+    let events = log.Events
+    let mutable k = 0
+    while k < events.Length do
+        let n = min ChunkSize (events.Length - k)
+        let slice = Array.sub events k n |> Array.map eventDto
+        post (createObj [ "type" ==> "eventsChunk"; "events" ==> slice ])
+        k <- k + n
+
+    post (createObj [ "type" ==> "loadEnd" ])
+
+/// Builds the on-demand response carrying a single source's events, requested by the
+/// Events view when a source is selected (so the webview never has to hold every
+/// event's params in memory just to render details).
+let sourceEventsMessage (id: int) (events: Model.Event seq) : obj =
+    createObj [
+        "type" ==> "sourceEvents"
+        "id" ==> id
+        "events" ==> (events |> Seq.map eventDto |> Seq.toArray)
     ]

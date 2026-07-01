@@ -61,7 +61,18 @@
         "title": "Open File",
         "category": "Netlog Viewer"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Netlog Viewer",
+      "properties": {
+        "netlogViewer.maxEvents": {
+          "type": "number",
+          "default": 2000000,
+          "minimum": 0,
+          "markdownDescription": "Maximum number of NetLog events to load from a single file. Larger files are streamed from disk and truncated at this many events (with a warning) so memory stays bounded. Set to `0` to load every event (may exhaust memory on very large logs)."
+        }
+      }
+    }
   },
   "capabilities": {
     "untrustedWorkspaces": {

@@ -175,6 +175,135 @@ match LogParser.loadLogFile (readFile "samples/sample.netlog.json") with
     check "bytes hex contains hex octets" (hexText.Contains "41 42 43")
     check "bytes hex contains ascii gutter" (hexText.Contains "ABC")
 
+// --- Streaming parser + JSON stream scanner ---
+printfn "StreamingParser + JsonStreamScanner"
+
+// Drives the scanner + streaming parser over `text`, split into `chunkSize` pieces,
+// so chunk boundaries fall in the middle of keys/values/strings.
+let runStreaming (maxEvents: int) (chunkSize: int) (text: string) : Result<LogParser.LoadedLog, string> =
+    let st = StreamingParser.create maxEvents
+    let scanner =
+        Netlog.Core.JsonStreamScanner.Scanner(
+            StreamingParser.pushConstantsJson st,
+            StreamingParser.pushEventJson st,
+            StreamingParser.pushTailJson st
+        )
+    let mutable i = 0
+    while i < text.Length do
+        let len = min chunkSize (text.Length - i)
+        scanner.Push(text.Substring(i, len))
+        i <- i + len
+    scanner.Finish()
+    StreamingParser.finish st scanner.IsComplete
+
+let sampleText = readFile "samples/sample.netlog.json"
+
+// Streaming must match the batch loadLogFile for the same document, at every chunk size.
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "batch baseline loads" false
+| Ok batch ->
+    for chunkSize in [ 1; 3; 64; sampleText.Length ] do
+        match runStreaming 0 chunkSize sampleText with
+        | Error e ->
+            check (sprintf "streaming loads (chunk=%d)" chunkSize) false
+            eprintfn "%s" e
+        | Ok s ->
+            checkEq (sprintf "streaming event count (chunk=%d)" chunkSize) batch.Events.Length s.Events.Length
+            checkEq (sprintf "streaming source count (chunk=%d)" chunkSize) batch.Sources.Length s.Sources.Length
+            checkEq
+                (sprintf "streaming description (chunk=%d)" chunkSize)
+                batch.Sources.[0].Description
+                s.Sources.[0].Description
+            checkEq (sprintf "streaming numericDate (chunk=%d)" chunkSize) batch.NumericDate s.NumericDate
+            checkEq
+                (sprintf "streaming duration (chunk=%d)" chunkSize)
+                (SourceGrouping.duration batch.LastEventTicks batch.Sources.[0])
+                (SourceGrouping.duration s.LastEventTicks s.Sources.[0])
+            check (sprintf "streaming clean load (chunk=%d)" chunkSize) (not (s.LoadLog.Contains "truncated"))
+
+// A well-formed dump with trailing polledData + escaped-quote userComments.
+let streamingDump =
+    "{\"constants\":{\"logFormatVersion\":1,"
+    + "\"logEventTypes\":{\"REQUEST_ALIVE\":1},"
+    + "\"logEventPhase\":{\"PHASE_NONE\":0,\"PHASE_BEGIN\":1,\"PHASE_END\":2},"
+    + "\"logSourceType\":{\"NONE\":0,\"URL_REQUEST\":1},"
+    + "\"loadFlag\":{\"NORMAL\":0},\"netError\":{\"ERR_FAILED\":-2},"
+    + "\"addressFamily\":{\"UNSPEC\":0},\"timeTickOffset\":\"1700000000000\","
+    + "\"clientInfo\":{\"numericDate\":1700000000000}},\n"
+    + "\"events\":[\n"
+    + "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1000\",\"phase\":1,\"params\":{\"url\":\"https://a/\"}},\n"
+    + "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1080\",\"phase\":2}\n"
+    + "],\n"
+    + "\"polledData\":{\"foo\":1},\n"
+    + "\"userComments\":\"hello, \\\"world\\\"\"}\n"
+
+match runStreaming 0 1 streamingDump with
+| Error e ->
+    check "streamingDump loads" false
+    eprintfn "%s" e
+| Ok s ->
+    checkEq "streamingDump events" 2 s.Events.Length
+    checkEq "streamingDump sources" 1 s.Sources.Length
+    checkEq "streamingDump description" "https://a/" s.Sources.[0].Description
+    checkEq "streamingDump polledData.foo" 1.0 (wnum s.PolledData "foo")
+    checkEq "streamingDump userComments (unescaped)" (Some "hello, \"world\"") s.UserComments
+    check "streamingDump not truncated" (not (s.LoadLog.Contains "truncated"))
+
+// Cap: only the first N events are kept, with a warning.
+match runStreaming 1 5 streamingDump with
+| Error _ -> check "cap load" false
+| Ok s ->
+    checkEq "cap event count" 1 s.Events.Length
+    check "cap warning present" (s.LoadLog.Contains "maximum")
+
+// Truncated --log-net-log stream: last event incomplete, root never closes.
+match runStreaming 0 5 truncatedDump with
+| Error _ -> check "truncated stream load" false
+| Ok s ->
+    checkEq "truncated stream event count" 1 s.Events.Length
+    check "truncated stream warning present" (s.LoadLog.Contains "truncated")
+
+// --- Wire.postLoad chunked protocol (loadStart -> chunks -> loadEnd) ---
+printfn "Wire.postLoad (chunked)"
+
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "postLoad baseline loads" false
+| Ok log ->
+    let msgs = ResizeArray<obj>()
+    Wire.postLoad (fun m -> msgs.Add m) "sample.netlog.json" log
+    check "postLoad emits messages" (msgs.Count >= 2)
+    checkEq "postLoad first is loadStart" "loadStart" (wstr msgs.[0] "type")
+    checkEq "postLoad last is loadEnd" "loadEnd" (wstr msgs.[msgs.Count - 1] "type")
+
+    let mutable evTotal = 0
+    let mutable srcTotal = 0
+    for m in msgs do
+        match wstr m "type" with
+        | "eventsChunk" -> evTotal <- evTotal + Json.length (Json.get m "events")
+        | "sourcesChunk" -> srcTotal <- srcTotal + Json.length (Json.get m "sources")
+        | _ -> ()
+    checkEq "postLoad reassembled event count" log.Events.Length evTotal
+    checkEq "postLoad reassembled source count" log.Sources.Length srcTotal
+    checkEq "postLoad loadStart eventCount" log.Events.Length (int (wnum (Json.get msgs.[0] "stats") "eventCount"))
+    check "postLoad loadStart omits events array" (not (Json.isArray (Json.get msgs.[0] "events")))
+    check "postLoad loadStart carries constants" (Json.isObject (Json.get msgs.[0] "constants"))
+
+// --- Wire.sourceEventsMessage (on-demand details) ---
+printfn "Wire.sourceEventsMessage"
+
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "sourceEvents baseline loads" false
+| Ok log ->
+    match log.SourceIndex.TryGetValue 1 with
+    | true, se ->
+        let msg = Wire.sourceEventsMessage 1 se.Entries
+        checkEq "sourceEvents type" "sourceEvents" (wstr msg "type")
+        checkEq "sourceEvents id" 1 (int (wnum msg "id"))
+        checkEq "sourceEvents event count" se.Entries.Count (Json.length (Json.get msg "events"))
+        let ev0 = Json.item (Json.get msg "events") 0
+        checkEq "sourceEvents ev0 sourceId" 1 (int (wnum ev0 "sourceId"))
+    | _ -> check "source id 1 present" false
+
 printfn ""
 
 if failures > 0 then

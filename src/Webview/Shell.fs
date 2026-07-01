@@ -7,6 +7,7 @@ open Netlog.Webview.Dom
 type Page =
     { TopBar: Element
       FileName: Element
+      Banner: Element
       TabList: Element
       Content: Element }
 
@@ -20,6 +21,11 @@ let build () : Page =
     let fileName = addNodeWithText topBar "span" "No log loaded."
     fileName.className <- "nv-filename"
 
+    // Load status / warning banner (hidden until there is something to report).
+    let banner = addNode app "div"
+    banner.className <- "nv-banner"
+    banner.style.display <- "none"
+
     let body = addNode app "div"
     body.className <- "nv-body"
 
@@ -31,5 +37,6 @@ let build () : Page =
 
     { TopBar = topBar
       FileName = fileName
+      Banner = banner
       TabList = tabList
       Content = content }

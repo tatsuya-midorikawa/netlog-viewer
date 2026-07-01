@@ -54,8 +54,13 @@ type ICommands =
 type IFileSystem =
     abstract readFile: Uri -> JS.Promise<JS.Uint8Array>
 
+type IWorkspaceConfiguration =
+    /// `get(section, default)` — returns the configured value or the default.
+    abstract get: string * obj -> obj
+
 type IWorkspace =
     abstract fs: IFileSystem
+    abstract getConfiguration: string -> IWorkspaceConfiguration
 
 type IUriStatic =
     abstract joinPath: Uri * string * string -> Uri

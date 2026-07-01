@@ -14,6 +14,8 @@
     <Compile Include="LogGrouper.fs" />
     <Compile Include="SourceGrouping.fs" />
     <Compile Include="LogParser.fs" />
+    <Compile Include="JsonStreamScanner.fs" />
+    <Compile Include="StreamingParser.fs" />
     <Compile Include="Wire.fs" />
     <Compile Include="Library.fs" />
   </ItemGroup>

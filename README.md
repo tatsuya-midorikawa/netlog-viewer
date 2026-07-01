@@ -36,6 +36,7 @@
 - **Read-only and fully offline**: Never writes to files and never communicates over the network.
 - **No external runtime libraries**: Both the parser and the viewer are built entirely from scratch using only the standard library (see [DEVELOPMENT.md](./DEVELOPMENT.md) for details).
 - **Supports `.json` / `.netlog` / `.gz` (gzip)**.
+- **Handles very large logs**: files are streamed from disk as they are parsed, so multi-hundred-MB and multi-GB logs open without hitting the ~512 MB string-size limit. Load progress and any truncation warnings are shown in an in-view banner.
 
 ---
 
@@ -103,7 +104,9 @@ The following command is available from the Command Palette (`Ctrl+Shift+P` / `â
 
 ## Settings
 
-There are currently no user-configurable settings. Options such as rendering limits and the default tab are being considered in the [Roadmap](#roadmap).
+| Setting | Default | Description |
+| --- | --- | --- |
+| `netlogViewer.maxEvents` | `2000000` | Maximum number of events loaded from a single file. Larger files are streamed from disk and truncated at this many events (with a warning) so memory stays bounded. Set to `0` to load every event (may exhaust memory on very large logs). |
 
 ---
 
@@ -112,6 +115,8 @@ There are currently no user-configurable settings. Options such as rendering lim
 - **For viewing exported logs only.** Real-time connection to and capture from a live browser (as with `net-internals`) is not supported. (The information tabs display the `polledData` included in the log, and tabs with no data are hidden automatically.)
 - The only supported compression format is **gzip (`.gz`)**; `.zip` is not supported.
 - Some information tabs (Proxy settings / DNS settings / Reporting clients and NEL) currently display formatted JSON.
+- On the Events tab, the free-text filter matches a source's id, type, and description; it does not search within event parameters. Details for a selected source are loaded on demand.
+- The Events source list renders at most 2,000 matching rows at a time; all sources stay filterable, so refine the filter to reach the rest.
 - Because it is read-only, logs cannot be edited or saved.
 
 ---
