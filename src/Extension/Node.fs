@@ -59,3 +59,45 @@ let decoderFlush (decoder: obj) : string = jsNative
 [<Emit("String(($0 && $0.message) ? $0.message : $0)")>]
 let errorMessage (err: obj) : string = jsNative
 
+// --- Parallel loading primitives (worker_threads + SharedArrayBuffer) ---
+
+/// Number of logical CPUs (used to size the worker pool).
+[<Emit("require('node:os').cpus().length")>]
+let cpuCount () : int = jsNative
+
+/// Synchronously stats a file, returning its size in bytes.
+[<Emit("require('node:fs').statSync($0).size")>]
+let fileSize (path: string) : float = jsNative
+
+/// Allocates a SharedArrayBuffer-backed Uint8Array of `size` bytes and synchronously
+/// reads the whole file into it (so worker threads can read their assigned byte
+/// ranges zero-copy). Only used above the parallel-loading size threshold, where
+/// holding the whole file in memory once is an acceptable, bounded cost. Throws on
+/// I/O failure.
+[<Emit("(() => { const fs = require('node:fs'); const fd = fs.openSync($0, 'r'); try { const buf = new Uint8Array(new SharedArrayBuffer($1)); let off = 0; while (off < $1) { const n = fs.readSync(fd, buf, off, $1 - off, off); if (n <= 0) break; off += n; } return buf; } finally { fs.closeSync(fd); } })()")>]
+let readFileIntoSharedBuffer (path: string) (size: int) : byte[] = jsNative
+
+/// True when running as the main (Extension Host) thread, false inside a
+/// worker_threads Worker.
+[<Emit("require('node:worker_threads').isMainThread")>]
+let isMainThread () : bool = jsNative
+
+/// Creates and starts a new worker thread running the script at `scriptPath`,
+/// passing `data` as its `workerData` (SharedArrayBuffer instances are passed by
+/// reference/zero-copy; everything else is structured-cloned).
+[<Emit("new (require('node:worker_threads').Worker)($0, { workerData: $1 })")>]
+let createWorker (scriptPath: string) (data: obj) : obj = jsNative
+
+/// The current worker's `workerData` (only meaningful inside a worker thread).
+[<Emit("require('node:worker_threads').workerData")>]
+let workerData () : obj = jsNative
+
+/// Posts a message from a worker thread back to its parent.
+[<Emit("require('node:worker_threads').parentPort.postMessage($0)")>]
+let postToParent (msg: obj) : unit = jsNative
+
+/// Forcibly stops a worker thread (used on the failure path to avoid leaking
+/// still-running workers when one of them errors).
+[<Emit("$0.terminate()")>]
+let terminateWorker (worker: obj) : unit = jsNative
+

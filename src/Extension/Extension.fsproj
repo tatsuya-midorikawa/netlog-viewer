@@ -7,7 +7,9 @@
   <ItemGroup>
     <Compile Include="Vscode.fs" />
     <Compile Include="Node.fs" />
+    <Compile Include="ParseWorker.fs" />
     <Compile Include="StreamLoader.fs" />
+    <Compile Include="ParallelStreamLoader.fs" />
     <Compile Include="NetlogEditor.fs" />
     <Compile Include="Extension.fs" />
   </ItemGroup>

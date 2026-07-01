@@ -10,6 +10,9 @@ dist/
 fable_modules/
 *.vsix
 
+# Rust/Cargo build artifacts (wasm/scanner spike)
+wasm/**/target/
+
 # User-specific files
 *.rsuser
 *.suo

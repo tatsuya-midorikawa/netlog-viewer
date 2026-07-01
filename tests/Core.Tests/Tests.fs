@@ -198,6 +198,19 @@ let runStreaming (maxEvents: int) (chunkSize: int) (text: string) : Result<LogPa
 
 let sampleText = readFile "samples/sample.netlog.json"
 
+// checkConstants must (re-)establish TimeUtil's shared tick offset itself, not rely
+// on a prior call having left the right value behind -- poison it with an obviously
+// wrong sentinel first so this test can't accidentally pass via leftover state from
+// an earlier test in this same process.
+Netlog.Core.TimeUtil.setTimeTickOffset -999999.0
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "tickOffset baseline loads" false
+| Ok batchForOffset ->
+    Netlog.Core.TimeUtil.setTimeTickOffset -999999.0
+    match runStreaming 0 1 sampleText with
+    | Error _ -> check "tickOffset streaming loads" false
+    | Ok s -> checkEq "checkConstants resets TimeUtil tick offset" batchForOffset.NumericDate s.NumericDate
+
 // Streaming must match the batch loadLogFile for the same document, at every chunk size.
 match LogParser.loadLogFile sampleText with
 | Error _ -> check "batch baseline loads" false
@@ -352,6 +365,109 @@ match runStreamingBytes 0 1 utf8Dump with
     check "byte utf8Dump loads" false
     eprintfn "%s" e
 | Ok s -> checkEq "byte utf8Dump description (multibyte, chunk=1)" "https://例え.jp/日本語/café" s.Sources.[0].Description
+
+// --- Parallel-loading core helpers: validateEventBatch + finalizeFromShards ---
+// (Core.fsproj-only logic used by the worker-thread loading path; the actual worker
+// orchestration lives in the Extension project and isn't unit-testable here, but the
+// merge/regroup correctness -- the part most likely to have subtle bugs, since a
+// source's events can be split across shards -- is fully covered by comparing
+// against the sequential `loadLogFile` baseline at several different shard counts.)
+printfn "Parallel ingest (validateEventBatch + finalizeFromShards)"
+
+let runSharded (numShards: int) (maxEvents: int) (text: string) : Result<LogParser.LoadedLog, string> =
+    let raw = Json.parse text
+    match LogParser.checkConstants (Json.get raw "constants") with
+    | Error e -> Error e
+    | Ok constants ->
+        let eventsRaw = Json.get raw "events"
+        let total = if Json.isArray eventsRaw then Json.length eventsRaw else 0
+        let evs = Array.init total (fun i -> Json.item eventsRaw i)
+        let shardSize = max 1 ((evs.Length + numShards - 1) / numShards)
+        let shards =
+            [| for i in 0 .. numShards - 1 do
+                   let start = i * shardSize
+                   if start < evs.Length then
+                       let len = min shardSize (evs.Length - start)
+                       yield LogParser.validateEventBatch constants (Array.sub evs start len) |]
+        let polledData =
+            let p = Json.get raw "polledData"
+            if Json.isObject p then p else Json.emptyObject ()
+        let tabData =
+            let t = Json.get raw "tabData"
+            if Json.isObject t then t else Json.emptyObject ()
+        Ok(
+            LogParser.finalizeFromShards
+                constants
+                shards
+                maxEvents
+                polledData
+                tabData
+                (Json.tryString raw "userComments")
+                ""
+        )
+
+match LogParser.loadLogFile sampleText with
+| Error _ -> check "sharded batch baseline loads" false
+| Ok batch ->
+    for numShards in [ 1; 2; 3; 7 ] do
+        match runSharded numShards 0 sampleText with
+        | Error e ->
+            check (sprintf "sharded loads (n=%d)" numShards) false
+            eprintfn "%s" e
+        | Ok s ->
+            checkEq (sprintf "sharded event count (n=%d)" numShards) batch.Events.Length s.Events.Length
+            checkEq (sprintf "sharded source count (n=%d)" numShards) batch.Sources.Length s.Sources.Length
+            checkEq (sprintf "sharded numericDate (n=%d)" numShards) batch.NumericDate s.NumericDate
+            check (sprintf "sharded clean load (n=%d)" numShards) (not (s.LoadLog.Contains "truncated"))
+            // Every source's derived state must match the sequential baseline exactly,
+            // regardless of how its events were split across shards -- this is the
+            // property most at risk when grouping is deferred to a post-merge pass.
+            checkEq
+                (sprintf "sharded per-source parity (n=%d)" numShards)
+                (batch.Sources |> Array.map (fun se -> se.Description, se.IsError, se.IsInactive, se.Entries.Count))
+                (s.Sources |> Array.map (fun se -> se.Description, se.IsError, se.IsInactive, se.Entries.Count))
+
+// Cap enforcement must still be exact when events are split across shards: the
+// merge concatenates shards in original order before truncating, so the kept
+// events are always the first `maxEvents` in FILE order, not shard-arrival order.
+match runSharded 2 1 streamingDump with
+| Error _ -> check "sharded cap load" false
+| Ok s ->
+    checkEq "sharded cap event count" 1 s.Events.Length
+    check "sharded cap warning present" (s.LoadLog.Contains "maximum")
+
+// validateEventBatchFromJson: a malformed JSON string in the batch must be counted
+// as invalid, not crash the whole shard (this is what a worker thread actually
+// calls, since it only has raw byte ranges, not pre-parsed objects).
+match LogParser.checkConstants (Json.get (Json.parse streamingDump) "constants") with
+| Error _ -> check "validateEventBatchFromJson constants" false
+| Ok constants ->
+    let rawEvents =
+        [| "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1000\",\"phase\":1,\"params\":{\"url\":\"https://a/\"}}"
+           "{not valid json"
+           "{\"source\":{\"type\":1,\"id\":1},\"type\":1,\"time\":\"1080\",\"phase\":2}" |]
+    let result = LogParser.validateEventBatchFromJson constants rawEvents
+    checkEq "validateEventBatchFromJson valid count" 2 result.Events.Length
+    checkEq "validateEventBatchFromJson invalid count" 1 result.NumInvalid
+
+// eventToTransfer/eventFromTransfer must round-trip exactly (worker_threads
+// boundary): StartTime (Some and None) and Params must survive intact.
+let transferSample: Model.Event =
+    { Index = 5
+      Time = 1234.5
+      Type = 2
+      Phase = 1
+      SourceId = 9
+      SourceType = 3
+      StartTime = Some 999.0
+      Params = Some(Json.parse "{\"url\":\"https://example/\"}") }
+
+let transferRoundTrip = LogParser.eventFromTransfer (LogParser.eventToTransfer transferSample)
+checkEq "eventTransfer round-trip (Some StartTime)" transferSample transferRoundTrip
+
+let transferSampleNoStart = { transferSample with StartTime = None; Params = None }
+let transferRoundTripNoStart = LogParser.eventFromTransfer (LogParser.eventToTransfer transferSampleNoStart)
+checkEq "eventTransfer round-trip (None StartTime/Params)" transferSampleNoStart transferRoundTripNoStart
 
 // --- Wire.postLoad chunked protocol (loadStart -> chunks -> loadEnd) ---
 printfn "Wire.postLoad (chunked)"

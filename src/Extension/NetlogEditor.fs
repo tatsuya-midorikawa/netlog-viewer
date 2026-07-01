@@ -89,6 +89,9 @@ let private handleMessage
 
         if uri.scheme = "file" then
             // Large files: stream from disk so we never build one giant string.
+            // (ParallelStreamLoader.load exists and is correct -- see its module
+            // doc comment -- but measurements showed it is not currently a net win,
+            // so it is not wired in here; StreamLoader remains the active path.)
             StreamLoader.load uri.fsPath (readMaxEvents ()) onLog (postError webview)
         else
             // Virtual / non-local documents have no local path to stream; fall back to

@@ -1,0 +1,20 @@
+[package]
+name = "netlog-scanner"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Zero third-party crates/dependencies -- this is a from-scratch structural scanner,
+# see src/lib.rs's module doc comment. Rust/cargo are used purely as a build
+# toolchain (like Fable/esbuild elsewhere in this project), not a runtime dependency:
+# the only artifact that ships is the compiled .wasm file, executed by Node's
+# built-in WebAssembly support.
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
