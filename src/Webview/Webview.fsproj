@@ -14,6 +14,7 @@
     <Compile Include="SourceFilterParser.fs" />
     <Compile Include="LogViewPainter.fs" />
     <Compile Include="DetailsView.fs" />
+    <Compile Include="DetailsFind.fs" />
     <Compile Include="ResizableVerticalSplitView.fs" />
     <Compile Include="EventsView.fs" />
     <Compile Include="InfoViews.fs" />

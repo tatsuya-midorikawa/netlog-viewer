@@ -11,6 +11,14 @@ type Style =
     abstract left: string with get, set
     abstract top: string with get, set
 
+type Rect =
+    abstract top: float
+    abstract bottom: float
+    abstract left: float
+    abstract right: float
+    abstract width: float
+    abstract height: float
+
 type ClassList =
     abstract add: string -> unit
     abstract remove: string -> unit
@@ -28,6 +36,7 @@ type Element =
     abstract colSpan: int with get, set
     abstract clientWidth: int
     abstract clientHeight: int
+    abstract scrollTop: float with get, set
     abstract style: Style
     abstract classList: ClassList
     abstract parentNode: Element
@@ -35,9 +44,20 @@ type Element =
     abstract setAttribute: string * string -> unit
     abstract getAttribute: string -> string
     abstract scrollIntoView: unit -> unit
+    abstract getBoundingClientRect: unit -> Rect
+    abstract contains: Element -> bool
     abstract addEventListener: string * (obj -> unit) -> unit
     abstract tabIndex: int with get, set
     abstract focus: unit -> unit
+
+type Range =
+    abstract setStart: Element * int -> unit
+    abstract setEnd: Element * int -> unit
+    abstract getBoundingClientRect: unit -> Rect
+
+type Highlight =
+    abstract add: Range -> unit
+    abstract clear: unit -> unit
 
 type Document =
     abstract getElementById: string -> Element
@@ -95,6 +115,30 @@ let acquireVsCodeApi () : VsCodeApi = jsNative
 [<Emit("$0.preventDefault()")>]
 let preventDefault (e: obj) : unit = jsNative
 
+[<Emit("$0.ctrlKey")>]
+let eventCtrl (e: obj) : bool = jsNative
+
+[<Emit("$0.metaKey")>]
+let eventMeta (e: obj) : bool = jsNative
+
+[<Emit("$0.shiftKey")>]
+let eventShift (e: obj) : bool = jsNative
+
+[<Emit("document.createRange()")>]
+let newRange () : Range = jsNative
+
+[<Emit("new Highlight()")>]
+let newHighlight () : Highlight = jsNative
+
+[<Emit("typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight !== 'undefined'")>]
+let supportsHighlightApi () : bool = jsNative
+
+[<Emit("CSS.highlights.set($0, $1)")>]
+let cssHighlightsSet (name: string) (highlight: Highlight) : unit = jsNative
+
+[<Emit("CSS.highlights.delete($0)")>]
+let cssHighlightsDelete (name: string) : unit = jsNative
+
 /// Used for the brief "Copied!" -> "Copy" button-text revert (ImportView) and for
 /// debouncing the Events tab's `has:` param-search request. Returns the timer
 /// handle so a pending call can be cancelled via clearTimeout.
@@ -130,6 +174,18 @@ let setNodeDisplay (node: Element) (visible: bool) : unit =
     node.style.display <- (if visible then "" else "none")
 
 let clear (node: Element) : unit = node.innerHTML <- ""
+
+[<Emit("Array.from($0.querySelectorAll($1))")>]
+let querySelectorAllArray (node: Element) (selector: string) : Element[] = jsNative
+
+[<Emit("(() => { const walker = document.createTreeWalker($0, NodeFilter.SHOW_TEXT); const nodes = []; let node; while ((node = walker.nextNode())) nodes.push(node); return nodes; })()")>]
+let collectTextNodes (node: Element) : Element[] = jsNative
+
+[<Emit("$0.nodeValue || ''")>]
+let nodeValue (node: Element) : string = jsNative
+
+[<Emit("$0.select()")>]
+let selectInput (node: Element) : unit = jsNative
 
 [<Emit("$0.checked")>]
 let getChecked (node: Element) : bool = jsNative

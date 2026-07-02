@@ -2,7 +2,7 @@
   "name": "netlog-viewer",
   "displayName": "Netlog Viewer",
   "description": "View Chromium net-export (NetLog) files. A from-scratch F# reimplementation of the Chromium netlog_viewer.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "tmidorikawa",
   "license": "MIT",
   "icon": "media/icon.png",

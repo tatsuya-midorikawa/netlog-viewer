@@ -9,6 +9,7 @@ open Netlog.Webview.Dom
 open Netlog.Webview.View
 open Netlog.Webview.SourceFilterParser
 open Netlog.Webview.DetailsView
+open Netlog.Webview.DetailsFind
 open Netlog.Webview.ResizableVerticalSplitView
 
 let tabId = "events"
@@ -65,6 +66,7 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
     let mutable tableBody = Unchecked.defaultof<Element>
     let mutable countNote = Unchecked.defaultof<Element>
     let mutable details = Unchecked.defaultof<DetailsView>
+    let mutable detailsFind = Unchecked.defaultof<DetailsFindController>
     let mutable constants = Unchecked.defaultof<Constants.Constants>
     let mutable baseTime = 0.0
     let mutable logCreationTime: float option = None
@@ -94,7 +96,7 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
 
     do this.BuildLayout()
 
-    member private _.BuildLayout() =
+    member private this.BuildLayout() =
         clear root
 
         let filterBar = addNode root "div"
@@ -152,7 +154,21 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
 
         let right = split.RightPane
         details <- DetailsView(addNode right "div")
+        detailsFind <- DetailsFindController(split.Root, right, details.Root)
         right.addEventListener ("click", this.OnDetailsClick)
+
+        window.addEventListener (
+            "keydown",
+            fun e ->
+                let key = eventKey e
+                if
+                    detailsFind.IsSupported
+                    && this.IsVisible
+                    && (key = "f" || key = "F")
+                    && (eventCtrl e || eventMeta e)
+                then
+                    preventDefault e
+                    detailsFind.Open())
 
         input.addEventListener ("input", (fun _ -> this.ApplyFilter()))
 
@@ -273,6 +289,7 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
             details.ScrollToSourceId id
             pendingScrollId <- None
         | _ -> ()
+        detailsFind.Refresh()
 
     member private this.OnRowClicked(vm: SourceVm) =
         for s in sources do
@@ -474,6 +491,11 @@ type EventsView(root: Element, post: obj -> unit, onFilterChanged: string -> uni
         paramSearchMatches <- Some(query, Set.ofArray ids)
         if (parse filterInput.value).ParamSearch = Some query then
             this.ApplyFilter()
+
+    override this.Show(visible: bool) =
+        base.Show visible
+        if not visible then
+            detailsFind.Close()
 
     override _.OnLoadLogFinish(model: obj) : bool =
         constants <- Constants.decode (Json.get (Json.get model "constants") "raw")

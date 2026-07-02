@@ -4,6 +4,7 @@ module Netlog.Core.Tests.Main
 
 open Fable.Core
 open Netlog.Core
+open Netlog.Webview.DetailsFind
 
 [<Emit("require('fs').readFileSync($0, 'utf8')")>]
 let readFile (path: string) : string = jsNative
@@ -153,6 +154,33 @@ checkEq
     "has: term does not itself affect the sync Filter"
     false
     ((Netlog.Webview.SourceFilterParser.parse "type:socket has:token").Filter urlReq)
+
+// --- DetailsFind: trace find matching and offset mapping ---
+printfn "DetailsFind"
+
+let findText = "abc ABC a.c"
+let plainInsensitive = findMatches findText "abc" false false 10
+checkEq "find plain case-insensitive" [ { Start = 0; End = 3 }; { Start = 4; End = 7 } ] plainInsensitive.Matches
+check "find plain not truncated" (not plainInsensitive.Truncated)
+check "find plain no error" plainInsensitive.Error.IsNone
+checkEq "find plain case-sensitive" [ { Start = 0; End = 3 } ] (findMatches findText "abc" true false 10).Matches
+checkEq "find plain escapes regex syntax" [ { Start = 8; End = 11 } ] (findMatches findText "a.c" false false 10).Matches
+checkEq "find regex" [ { Start = 0; End = 3 }; { Start = 4; End = 7 }; { Start = 8; End = 11 } ] (findMatches findText "a.c" false true 10).Matches
+check "find invalid regex reports error" (findMatches findText "(" false true 10).Error.IsSome
+checkEq "find zero-length regex ignored" [] (findMatches findText "^" false true 10).Matches
+let truncatedFind = findMatches "aaaa" "a" true false 2
+checkEq "find truncates matches" [ { Start = 0; End = 1 }; { Start = 1; End = 2 } ] truncatedFind.Matches
+check "find truncation flag" truncatedFind.Truncated
+
+let offsetRuns =
+    [| { TextRun.Start = 0; Length = 3 }
+       { TextRun.Start = 3; Length = 2 }
+       { TextRun.Start = 5; Length = 4 } |]
+checkEq "offset maps inside first run" (Some(0, 1)) (tryMapOffset offsetRuns 1)
+checkEq "offset maps boundary to next run" (Some(1, 0)) (tryMapOffset offsetRuns 3)
+checkEq "end offset maps inside later run" (Some(1, 2)) (tryMapEndOffset offsetRuns 5)
+checkEq "end offset maps final boundary" (Some(2, 4)) (tryMapEndOffset offsetRuns 9)
+checkEq "offset out of range" None (tryMapOffset offsetRuns 9)
 
 // --- ProxyFormatter ---
 printfn "ProxyFormatter"

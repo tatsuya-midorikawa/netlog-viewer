@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-07-02
+
 ### Added
 
 - Streaming loader for large NetLog files. Files are now read from disk incrementally instead of being loaded as a single string, so logs that previously failed with `Cannot create a string longer than 0x1fffffe8 characters` (the ~512 MB V8 string limit) now open. Both plain `.json` and gzip `.gz` files are streamed and decompressed on the fly.
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A “?” help popover next to the Events filter box documenting its full filter syntax.
 - Clickable, sortable column headers (ID / Type / Description) in the Events source table, in addition to the existing `sort:` filter syntax.
 - A “Loading events…” placeholder in the Events detail pane while a newly selected source's events are still being fetched.
+- In-pane find for Events trace details, with Cmd/Ctrl+F, match highlighting, next/previous navigation, match case, and regular expression toggles. Very large result sets are capped and shown as `5000+` matches to keep the viewer responsive.
 - The active tab and the Events filter text are now remembered (via VS Code's webview state) if the viewer is hidden and later restored, instead of resetting.
 - A Request/Response summary (method, URL, status, headers, and time to response headers) is now shown for HTTP request sources in the Events detail pane, so the actual request/response no longer has to be found by scrolling through the full connection-level trace.
 - Large parameter blocks (request/response headers) in the new Request/Response summary are now collapsible.
@@ -63,5 +66,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for `.json` / `.netlog` files and automatic gzip (`.gz`) decompression.
 - Fully offline and read-only; built from scratch with no external runtime libraries.
 
-[Unreleased]: https://github.com/tatsuya-midorikawa/netlog-viewer/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/tatsuya-midorikawa/netlog-viewer/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/tatsuya-midorikawa/netlog-viewer/compare/v0.0.1...v0.0.3
 [0.0.1]: https://github.com/tatsuya-midorikawa/netlog-viewer/releases/tag/v0.0.1

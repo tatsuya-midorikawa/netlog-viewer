@@ -202,6 +202,7 @@ pre {
   flex: 1 1 auto;
   min-height: 0;
   gap: 8px;
+  position: relative;
 }
 
 .nv-split-left {
@@ -341,6 +342,7 @@ pre {
    keyboard/AT navigation does. */
 a.nv-tab-link:focus-visible,
 .nv-filter-input:focus-visible,
+.nv-find-input:focus-visible,
 .nv-source-table tbody tr:focus-visible,
 .nv-sortable-th:focus-visible,
 .nv-icon-button:focus-visible,
@@ -367,6 +369,65 @@ a.nv-tab-link:focus-visible,
   border: 1px solid var(--vscode-button-border, transparent);
   border-radius: 3px;
   cursor: pointer;
+}
+
+.nv-icon-button.active {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.nv-find-open {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 100;
+}
+
+.nv-find-bar {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+  padding: 5px;
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.nv-find-input {
+  width: 180px;
+  max-width: 32vw;
+  padding: 2px 5px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+}
+
+.nv-find-input.error {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.nv-find-count {
+  min-width: 44px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground, #888);
+  text-align: right;
+  white-space: nowrap;
+}
+
+::highlight(nv-find-match) {
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  color: inherit;
+}
+
+::highlight(nv-find-current) {
+  background-color: var(--vscode-editor-findMatchBackground, rgba(255, 200, 0, 0.66));
+  color: inherit;
 }
 
 .nv-popover {
